@@ -43,6 +43,14 @@ public:
   void setCurrentNodeId (uint32_t currentNodeId);
   void showNodePositionTable (bool show);
   void refresh ();
+  
+  /** NetAnim online mode. */
+  
+  /** Method to schedule in simulator.
+    * coordinate = 0 to change x
+    * coordinate = 1 to change y */
+  static void ChangePosition (uint32_t nodeId, uint32_t coordinate, qreal value);
+
 private:
   typedef QVector <QtProperty *> QtPropertyVector_t;
   AnimPropertyBroswer ();
@@ -115,6 +123,12 @@ private:
 
   typedef std::map <QtProperty *, QString> PropertyIdMap_t;
   PropertyIdMap_t m_propertyId;
+  
+  /** NetAnim online mode. */
+  QPushButton * m_broadcastPacketButton;
+  QPushButton * m_setInterfacesDownButton;
+  QPushButton * m_setInterfacesUpButton;
+  
 private slots:
   void nodeIdSelectorSlot (QString newIndex);
   void valueChangedSlot (QtProperty*, QString);
@@ -123,6 +137,10 @@ private slots:
   void valueChangedSlot (QtProperty* ,bool);
   void modeChangedSlot (QString mode);
 
+  /** NetAnim online mode. */
+  void broadcastButtonClickedSlot ();
+  void setInterfacesDownSlot ();
+  void setInterfacesUpSlot ();
 };
 
 } // namespace netanim

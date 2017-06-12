@@ -22,6 +22,24 @@
 #include "animatormode.h"
 #include "animresource.h"
 
+// Change position
+#include "ns3/simulator.h"
+#include "ns3/default-simulator-impl.h"
+#include "ns3/node.h"
+#include "ns3/node-list.h"
+#include "ns3/mobility-model.h"
+
+// Send packets and set interfaces up/down
+#include "ns3/net-device.h"
+#include "ns3/channel.h"
+#include "ns3/packet.h"
+#include "ns3/ipv4.h"
+#include "ns3/ipv6.h"
+#include "ns3/ipv4-l3-protocol.h"
+#include "ns3/ipv6-l3-protocol.h"
+
+#include <string>
+
 namespace netanim {
 
 NS_LOG_COMPONENT_DEFINE ("AnimPropertyBroswer");
@@ -71,7 +89,10 @@ AnimPropertyBroswer::AnimPropertyBroswer ():
   m_spinBoxFactory (0),
   m_fileEditFactory (0),
   m_lineEditFactory (0),
-  m_checkBoxFactory (0)
+  m_checkBoxFactory (0),
+  m_broadcastPacketButton (0),
+  m_setInterfacesDownButton (0),
+  m_setInterfacesUpButton (0)
 {
   m_vboxLayout = new QVBoxLayout;
 
@@ -94,6 +115,19 @@ AnimPropertyBroswer::AnimPropertyBroswer ():
   //m_nodePosTable->setColumnCount (3);
   connect (m_mode, SIGNAL(currentIndexChanged(QString)), this, SLOT(modeChangedSlot(QString)));
 
+  // Connect buttons for online mode
+  
+  m_broadcastPacketButton = new QPushButton ("Send packets from this node");
+  m_vboxLayout->addWidget (m_broadcastPacketButton);
+  connect (m_broadcastPacketButton, SIGNAL(clicked()), this, SLOT(broadcastButtonClickedSlot()));
+  
+  m_setInterfacesDownButton = new QPushButton ("Set interfaces down");
+  m_vboxLayout->addWidget (m_setInterfacesDownButton);
+  connect (m_setInterfacesDownButton, SIGNAL(clicked()), this, SLOT(setInterfacesDownSlot()));
+
+  m_setInterfacesUpButton = new QPushButton ("Set interfaces up");
+  m_vboxLayout->addWidget (m_setInterfacesUpButton);
+  connect (m_setInterfacesUpButton, SIGNAL(clicked()), this, SLOT(setInterfacesUpSlot()));  
 }
 
 
@@ -281,8 +315,7 @@ AnimPropertyBroswer::setupNodeProperties ()
   // Properties
 
   AnimNode * animNode = AnimNodeMgr::getInstance ()->getNode (m_currentNodeId);
-
-
+  
   // Node Id, Node System Id
   m_nodeIdProperty = m_intManager->addProperty ("Node Id");
   m_intManager->setValue (m_nodeIdProperty, m_currentNodeId);
@@ -423,7 +456,6 @@ AnimPropertyBroswer::setupNodeProperties ()
        m_nodeBrowser->addProperty (prop);
        m_nodeCounterUint32Property.push_back (prop);
      }
-
 }
 
 void
@@ -437,24 +469,113 @@ AnimPropertyBroswer::valueChangedSlot (QtProperty * property, QColor c)
 }
 
 void
+AnimPropertyBroswer::ChangePosition(uint32_t nodeId, uint32_t coordinate, qreal value)
+{
+  ns3::Ptr<ns3::MobilityModel> mobilityModel = ns3::NodeList::GetNode (nodeId)->GetObject<ns3::MobilityModel> ();
+  ns3::Vector position = mobilityModel->GetPosition ();
+  
+  if (coordinate == 0)
+    {
+      position.x = value;
+    }
+  else
+    {
+      position.y = value;
+    }
+  
+  mobilityModel->SetPosition (position);
+}
+
+void
 AnimPropertyBroswer::valueChangedSlot(QtProperty * property, double value)
 {
   if (m_nodeXProperty == property)
     {
-      AnimNode * animNode = AnimNodeMgr::getInstance ()->getNode (m_currentNodeId);
-      animNode->setX (value);
-      qreal x = animNode->getX ();
+      AnimNode * animNode = AnimNodeMgr::getInstance ()->getNode (m_currentNodeId); 
       qreal y = animNode->getY ();
-      AnimatorMode::getInstance ()->setNodePos (animNode, x, y);
+
+      // Online mode
+      if (AnimatorMode::getInstance ()->isOnlineMode () && value != animNode->getX ())
+        {
+          double simulatorTime = (double)ns3::DefaultSimulatorImpl::GetCurrentGroupTime () / 1e9;
+          double visualizerTime = AnimatorMode::getInstance ()->getCurrentTime ();
+          ns3::Ptr<ns3::MobilityModel> mobilityModel = ns3::NodeList::GetNode (m_currentNodeId)->GetObject<ns3::MobilityModel> ();
+
+          // Simulator can not change otherwise          
+          if (mobilityModel)
+            {
+              // Can not change position before simulator current time
+              if (visualizerTime < simulatorTime)
+                {
+                  std::string message = "Position will be changed at ";
+                  message += std::to_string (simulatorTime);
+                  // Hide browser, segmentation fault otherwise 
+                  show (false);
+                  // Notify user
+                  AnimatorMode::getInstance ()->showPopup (message.c_str ());
+                  show (true);
+                }
+                
+              // Schedules at simulator current time
+              ns3::Simulator::ScheduleNow (&AnimPropertyBroswer::ChangePosition, m_currentNodeId, 0, value);
+            }
+          else
+            {
+              // Hide browser, segmentation fault otherwise
+              show (false);
+              // Notify user
+              AnimatorMode::getInstance ()->showPopup ("Node does not have mobility model.");
+              show (true);
+            }
+        }
+      else // Offline mode
+        {
+          AnimatorMode::getInstance ()->setNodePos (animNode, value, y);
+        }
     }
   if (m_nodeYProperty == property)
     {
-      AnimNode * animNode = AnimNodeMgr::getInstance ()->getNode (m_currentNodeId);
-      animNode->setY (value);
+      AnimNode * animNode = AnimNodeMgr::getInstance ()->getNode (m_currentNodeId); 
       qreal x = animNode->getX ();
-      qreal y = animNode->getY ();
-      AnimatorMode::getInstance ()->setNodePos (animNode, x, y);
 
+      // Online mode
+      if (AnimatorMode::getInstance ()->isOnlineMode () && value != animNode->getY ())
+        {
+          double simulatorTime = (double)ns3::DefaultSimulatorImpl::GetCurrentGroupTime () / 1e9;
+          double visualizerTime = AnimatorMode::getInstance ()->getCurrentTime ();
+          ns3::Ptr<ns3::MobilityModel> mobilityModel = ns3::NodeList::GetNode (m_currentNodeId)->GetObject<ns3::MobilityModel> ();
+          
+          // Simulator can not change otherwise
+          if (mobilityModel)
+            {
+              // Can not change position before simulator current time
+              if (visualizerTime < simulatorTime)
+                {
+                  std::string message = "Position will be changed at ";
+                  message += std::to_string (simulatorTime);
+                  // Hide browser, segmentation fault otherwise
+                  show (false);
+                  // Notify user
+                  AnimatorMode::getInstance ()->showPopup (message.c_str ());
+                  show (true);
+                }
+              
+              // Schedules at simulator current time
+              ns3::Simulator::ScheduleNow (&AnimPropertyBroswer::ChangePosition, m_currentNodeId, 1, value);
+            }
+          else
+            {
+              // Hide browser, segmentation fault otherwise
+              show (false);
+              // Notify user
+              AnimatorMode::getInstance ()->showPopup ("Node does not have mobility model.");
+              show (true);
+            }
+        }
+      else // Offline mode
+        {
+          AnimatorMode::getInstance ()->setNodePos (animNode, x, value);
+        }
     }
   if (m_nodeSizeProperty == property)
     {
@@ -730,5 +851,169 @@ AnimPropertyBroswer::nodeIdSelectorSlot (QString newIndex)
 
 }
 
+void
+AnimPropertyBroswer::broadcastButtonClickedSlot ()
+{
+  // Online mode
+  if (AnimatorMode::getInstance ()->isOnlineMode ())
+    {
+      // Current node
+      ns3::Ptr<ns3::Node> node = ns3::NodeList::GetNode (m_currentNodeId);
+      
+      // Ipv4 interfaces
+      ns3::Ptr<ns3::Ipv4> ipv4 = node->GetObject<ns3::Ipv4> ();
+      if (ipv4)
+        {
+          uint32_t nInterfaces = ipv4->GetNInterfaces ();
+          
+          // Trying to send packet from all Ipv4 net devices
+          for (uint32_t i = 0; i < nInterfaces; ++i)
+            {
+              ns3::Ptr<ns3::NetDevice> fromNetDevice = ipv4->GetNetDevice (i);
+              ns3::Ptr<ns3::Channel> channel = fromNetDevice->GetChannel ();
+              
+              if (channel)
+                {
+                  uint32_t channelNDevices = channel->GetNDevices ();   
+                  
+                  for (uint32_t j = 0; j < channelNDevices; ++j)
+                    {
+                      ns3::Ptr<ns3::NetDevice> toNetDevice = channel->GetDevice (j);
+                      // Sending 1024 dummy bytes with protocol number for Ipv4
+                      ns3::Simulator::ScheduleNow (&ns3::NetDevice::Send,
+                                                   fromNetDevice,
+                                                   ns3::Create<ns3::Packet> (1024),
+                                                   toNetDevice->GetAddress (),
+                                                   ns3::Ipv4L3Protocol::PROT_NUMBER);
+                    }
+                }
+            }
+        }
+      
+      // Ipv6 interfaces  
+      ns3::Ptr<ns3::Ipv6> ipv6 = node->GetObject<ns3::Ipv6> ();
+      if (ipv6)
+        {
+          uint32_t nInterfaces = ipv6->GetNInterfaces ();
+          
+          // Trying to send packet from all Ipv6 net devices
+          for (uint32_t i = 0; i < nInterfaces; ++i)
+            {
+              ns3::Ptr<ns3::NetDevice> fromNetDevice = ipv6->GetNetDevice (i);
+              ns3::Ptr<ns3::Channel> channel = fromNetDevice->GetChannel ();
+              
+              if (channel)
+                {
+                  uint32_t channelNDevices = channel->GetNDevices ();   
+                  
+                  for (uint32_t j = 0; j < channelNDevices; ++j)
+                    {
+                      ns3::Ptr<ns3::NetDevice> toNetDevice = channel->GetDevice (j);
+                      // Sending 1024 dummy bytes with protocol number for Ipv6
+                      ns3::Simulator::ScheduleNow (&ns3::NetDevice::Send,
+                                                   fromNetDevice,
+                                                   ns3::Create<ns3::Packet> (1024),
+                                                   toNetDevice->GetAddress (),
+                                                   ns3::Ipv6L3Protocol::PROT_NUMBER);
+                    }
+                }
+            }
+        }
+    }
+  else // Offline mode
+    {
+      // Hide browser, segmentation fault otherwise 
+      show (false);
+      // Notify user
+      AnimatorMode::getInstance ()->showPopup ("Online mode only");
+      show (true);
+    }
+}
+
+void
+AnimPropertyBroswer::setInterfacesDownSlot ()
+{
+  // Online mode
+  if (AnimatorMode::getInstance ()->isOnlineMode ())
+    {
+      // Current node
+      ns3::Ptr<ns3::Node> node = ns3::NodeList::GetNode (m_currentNodeId);
+      
+      // Ipv4 interfaces
+      ns3::Ptr<ns3::Ipv4> ipv4 = node->GetObject<ns3::Ipv4> ();
+      if (ipv4)
+        {
+          uint32_t nInterfaces = ipv4->GetNInterfaces ();
+          
+          for (uint32_t i = 1; i < nInterfaces; ++i)
+            {
+              ns3::Simulator::ScheduleNow (&ns3::Ipv4::SetDown, ipv4, i);
+            }
+        }
+      
+      // Ipv6 interfaces
+      ns3::Ptr<ns3::Ipv6> ipv6 = node->GetObject<ns3::Ipv6> ();
+      if (ipv6)
+        {
+          uint32_t nInterfaces = ipv6->GetNInterfaces ();
+          
+          for (uint32_t i = 1; i < nInterfaces; ++i)
+            {
+              ns3::Simulator::ScheduleNow (&ns3::Ipv6::SetDown, ipv6, i);
+            }
+        }
+    }
+  else // Offline mode
+    {
+      // Hide browser, segmentation fault otherwise 
+      show (false);
+      // Notify user
+      AnimatorMode::getInstance ()->showPopup ("Online mode only");
+      show (true);
+    }
+}
+
+void
+AnimPropertyBroswer::setInterfacesUpSlot ()
+{
+  // Online mode
+  if (AnimatorMode::getInstance ()->isOnlineMode ())
+    {
+      // Current node
+      ns3::Ptr<ns3::Node> node = ns3::NodeList::GetNode (m_currentNodeId);
+      
+      // Ipv4 interfaces
+      ns3::Ptr<ns3::Ipv4> ipv4 = node->GetObject<ns3::Ipv4> ();
+      if (ipv4)
+        {
+          uint32_t nInterfaces = ipv4->GetNInterfaces ();
+          
+          for (uint32_t i = 1; i < nInterfaces; ++i)
+            {
+              ns3::Simulator::ScheduleNow (&ns3::Ipv4::SetUp, ipv4, i);
+            }
+        }
+      
+      // Ipv6 interfaces
+      ns3::Ptr<ns3::Ipv6> ipv6 = node->GetObject<ns3::Ipv6> ();
+      if (ipv6)
+        {
+          uint32_t nInterfaces = ipv6->GetNInterfaces ();
+          
+          for (uint32_t i = 1; i < nInterfaces; ++i)
+            {
+              ns3::Simulator::ScheduleNow (&ns3::Ipv6::SetUp, ipv6, i);
+            }
+        }
+    }
+  else // Offline mode
+    {
+      // Hide browser, segmentation fault otherwise 
+      show (false);
+      // Notify user
+      AnimatorMode::getInstance ()->showPopup ("Online mode only");
+      show (true);
+    }
+}
 
 } // namespace netanim

@@ -2,7 +2,7 @@
 /*
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation;
+ * published by the Free Software Foundatfion;
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -172,240 +172,249 @@ Animxmlparser::getThousandthPacketTime ()
 }
 
 void
+Animxmlparser::parseElement (ParsedElement parsedElement)
+{
+  AnimatorMode * pAnimatorMode = AnimatorMode::getInstance ();
+  //NS_LOG_DEBUG ("my Animxmlparser::parseElement ");
+  switch (parsedElement.type)
+    {
+    case XML_ANIM:
+    {
+      AnimatorMode::getInstance ()->setVersion (parsedElement.version);
+      //qDebug (QString ("XML Version:") + QString::number (version));
+      break;
+    }
+    case XML_NODE:
+    {
+        m_minNodeX = qMin (m_minNodeX, parsedElement.node_x);
+        m_minNodeY = qMin (m_minNodeY, parsedElement.node_y);
+        m_maxNodeX = qMax (m_maxNodeX, parsedElement.node_x);
+        m_maxNodeY = qMax (m_maxNodeY, parsedElement.node_y);
+      AnimNodeAddEvent * ev = new AnimNodeAddEvent (parsedElement.nodeId,
+          parsedElement.nodeSysId,
+          parsedElement.node_x,
+          parsedElement.node_y,
+          parsedElement.nodeDescription,
+          parsedElement.node_r,
+          parsedElement.node_g,
+          parsedElement.node_b);
+      pAnimatorMode->addAnimEvent (0, ev);
+      AnimNodeMgr::getInstance ()->addAPosition (parsedElement.nodeId, 0, QPointF (parsedElement.node_x,
+                                                                                parsedElement.node_y));
+      break;
+    }
+    case XML_PACKET_TX_REF:
+    {
+      m_packetRefs[parsedElement.uid] = parsedElement;
+      break;
+    }
+    case XML_WPACKET_RX_REF:
+    {
+        ParsedElement & ref = m_packetRefs[parsedElement.uid];
+        parsedElement.packetrx_fromId = ref.packetrx_fromId;
+        parsedElement.packetrx_fbTx = ref.packetrx_fbTx;
+        parsedElement.packetrx_lbTx = ref.packetrx_lbTx;
+        parsedElement.meta_info = ref.meta_info;
+    }
+    case XML_WPACKET_RX:
+    case XML_PACKET_RX:
+    {
+      m_firstPacketTime = qMin (m_firstPacketTime, parsedElement.packetrx_fbTx);
+      if (parsedElement.packetrx_fromId == parsedElement.packetrx_toId)
+        break;
+      uint8_t numWirelessSlots = 3;
+      AnimPacketEvent * ev = new AnimPacketEvent (parsedElement.packetrx_fromId,
+          parsedElement.packetrx_toId,
+          parsedElement.packetrx_fbTx,
+          parsedElement.packetrx_fbRx,
+          parsedElement.packetrx_lbTx,
+          parsedElement.packetrx_lbRx,
+          parsedElement.isWpacket,
+          parsedElement.meta_info,
+          numWirelessSlots);
+      pAnimatorMode->addAnimEvent (parsedElement.packetrx_fbTx, ev);
+      ++m_parsedElementCount;
+      m_lastPacketEventTime = parsedElement.packetrx_fbRx;
+      if (m_parsedElementCount == 50)
+        m_thousandThPacketTime = parsedElement.packetrx_fbRx;
+
+      if (!parsedElement.isWpacket)
+        {
+          qreal fullDuration = parsedElement.packetrx_fbRx - parsedElement.packetrx_fbTx;
+          uint32_t numSlots = WIRED_PACKET_SLOTS;
+          qreal step = fullDuration/numSlots;
+          for (uint32_t i = 1; i <= numSlots; ++i)
+            {
+              qreal point = parsedElement.packetrx_fbTx + (i * step);
+              //NS_LOG_DEBUG ("Point:" << point);
+              pAnimatorMode->addAnimEvent (point, new AnimWiredPacketUpdateEvent ());
+            }
+        }
+
+      //NS_LOG_DEBUG ("Packet Last Time:" << m_lastPacketEventTime);
+      break;
+    }
+    case XML_LINK:
+    {
+      //AnimLinkMgr::getInstance ()->add (parsedElement.link_fromId, parsedElement.link_toId);
+      AnimLinkAddEvent * ev = new AnimLinkAddEvent (parsedElement.link_fromId,
+          parsedElement.link_toId,
+          parsedElement.linkDescription,
+          parsedElement.fromNodeDescription,
+          parsedElement.toNodeDescription);
+      pAnimatorMode->addAnimEvent (0, ev);
+      break;
+    }
+    case XML_NONP2P_LINK:
+    {
+      AnimLinkAddEvent * ev = new AnimLinkAddEvent (parsedElement.link_fromId,
+          parsedElement.link_toId,
+          parsedElement.linkDescription,
+          parsedElement.fromNodeDescription,
+          parsedElement.toNodeDescription,
+          false);
+      pAnimatorMode->addAnimEvent (0, ev);
+      break;
+
+
+    }
+    case XML_LINKUPDATE:
+    {
+      AnimLinkUpdateEvent * ev = new AnimLinkUpdateEvent (parsedElement.link_fromId,
+          parsedElement.link_toId,
+          parsedElement.linkDescription);
+      pAnimatorMode->addAnimEvent (parsedElement.updateTime, ev);
+      break;
+    }
+    case XML_BACKGROUNDIMAGE:
+    {
+      BackgroudImageProperties_t bgProp;
+      bgProp.fileName = parsedElement.fileName;
+      bgProp.x = parsedElement.x;
+      bgProp.y = parsedElement.y;
+      bgProp.scaleX = parsedElement.scaleX;
+      bgProp.scaleY = parsedElement.scaleY;
+      bgProp.opacity = parsedElement.opacity;
+      AnimatorMode::getInstance ()->setBackgroundImageProperties (bgProp);
+      break;
+    }
+
+    case XML_RESOURCE:
+    {
+      AnimResourceManager::getInstance ()->add (parsedElement.resourceId, parsedElement.resourcePath);
+      break;
+    }
+    case XML_IP:
+    {
+      AnimIpEvent * ev = new AnimIpEvent (parsedElement.nodeId, parsedElement.ipAddresses);
+      pAnimatorMode->addAnimEvent (0, ev);
+      break;
+    }
+    case XML_IPV6:
+    {
+      AnimIpv6Event * ev = new AnimIpv6Event (parsedElement.nodeId, parsedElement.ipv6Addresses);
+      pAnimatorMode->addAnimEvent (0, ev);
+      break;
+    }
+    case XML_CREATE_NODE_COUNTER:
+    {
+        AnimCreateNodeCounterEvent * ev = 0;
+        if (parsedElement.nodeCounterType == ParsedElement::UINT32_COUNTER)
+          ev = new AnimCreateNodeCounterEvent (parsedElement.nodeCounterId, parsedElement.nodeCounterName, AnimCreateNodeCounterEvent::UINT32_COUNTER);
+        if (parsedElement.nodeCounterType == ParsedElement::DOUBLE_COUNTER)
+          ev = new AnimCreateNodeCounterEvent (parsedElement.nodeCounterId, parsedElement.nodeCounterName, AnimCreateNodeCounterEvent::DOUBLE_COUNTER);
+        if (ev)
+          {
+            pAnimatorMode->addAnimEvent (0, ev);
+          }
+        break;
+    }
+    case XML_NODECOUNTER_UPDATE:
+    {
+        AnimNodeCounterUpdateEvent * ev = new AnimNodeCounterUpdateEvent (parsedElement.nodeCounterId,
+                                                                          parsedElement.nodeId,
+                                                                          parsedElement.nodeCounterValue);
+        pAnimatorMode->addAnimEvent (parsedElement.updateTime, ev);
+        break;
+    }
+    case XML_NODEUPDATE:
+    {
+      if (parsedElement.nodeUpdateType == ParsedElement::POSITION)
+        {
+          AnimNodePositionUpdateEvent * ev = new AnimNodePositionUpdateEvent (parsedElement.nodeId,
+              parsedElement.node_x,
+              parsedElement.node_y);
+          pAnimatorMode->addAnimEvent (parsedElement.updateTime, ev);
+          AnimNodeMgr::getInstance ()->addAPosition (parsedElement.nodeId, parsedElement.updateTime, QPointF (parsedElement.node_x,
+                                                                                    parsedElement.node_y));
+          m_minNodeX = qMin (m_minNodeX, parsedElement.node_x);
+          m_minNodeY = qMin (m_minNodeY, parsedElement.node_y);
+          m_maxNodeX = qMax (m_maxNodeX, parsedElement.node_x);
+          m_maxNodeY = qMax (m_maxNodeY, parsedElement.node_y);
+
+        }
+      if (parsedElement.nodeUpdateType == ParsedElement::COLOR)
+        {
+          AnimNodeColorUpdateEvent * ev = new AnimNodeColorUpdateEvent (parsedElement.nodeId,
+              parsedElement.node_r,
+              parsedElement.node_g,
+              parsedElement.node_b);
+
+          pAnimatorMode->addAnimEvent (parsedElement.updateTime, ev);
+        }
+      if (parsedElement.nodeUpdateType == ParsedElement::DESCRIPTION)
+        {
+          AnimNodeDescriptionUpdateEvent * ev = new AnimNodeDescriptionUpdateEvent (parsedElement.nodeId,
+              parsedElement.nodeDescription);
+          pAnimatorMode->addAnimEvent (parsedElement.updateTime, ev);
+
+        }
+      if (parsedElement.nodeUpdateType == ParsedElement::SIZE)
+        {
+          AnimNodeSizeUpdateEvent * ev = new AnimNodeSizeUpdateEvent (parsedElement.nodeId,
+              parsedElement.node_width,
+              parsedElement.node_height);
+          pAnimatorMode->addAnimEvent (parsedElement.updateTime, ev);
+
+        }
+      if (parsedElement.nodeUpdateType == ParsedElement::IMAGE)
+        {
+          AnimNodeImageUpdateEvent * ev = new AnimNodeImageUpdateEvent (parsedElement.nodeId,
+              parsedElement.resourceId);
+          pAnimatorMode->addAnimEvent (parsedElement.updateTime, ev);
+        }
+      if (parsedElement.nodeUpdateType == ParsedElement::SYSTEM_ID)
+        {
+          AnimNodeSysIdUpdateEvent * ev = new AnimNodeSysIdUpdateEvent (parsedElement.nodeId,
+                            parsedElement.nodeSysId);
+          pAnimatorMode->addAnimEvent (parsedElement.updateTime, ev);
+        }
+      break;
+
+    }
+    case XML_INVALID:
+    default:
+    {
+      //qDebug ("Invalid XML element");
+    }
+  } //switch
+}
+
+void
 Animxmlparser::doParse ()
 {
-  uint64_t parsedElementCount = 0;
-  AnimatorMode * pAnimatorMode = AnimatorMode::getInstance ();
+  m_parsedElementCount = 0;
+
   while (!isParsingComplete ())
     {
       if (AnimatorMode::getInstance ()->keepAppResponsive ())
         {
-          AnimatorMode::getInstance ()->setParsingCount (parsedElementCount);
+          AnimatorMode::getInstance ()->setParsingCount (m_parsedElementCount);
 
         }
       ParsedElement parsedElement = parseNext ();
-      switch (parsedElement.type)
-        {
-        case XML_ANIM:
-        {
-          AnimatorMode::getInstance ()->setVersion (parsedElement.version);
-          //qDebug (QString ("XML Version:") + QString::number (version));
-          break;
-        }
-        case XML_NODE:
-        {
-            m_minNodeX = qMin (m_minNodeX, parsedElement.node_x);
-            m_minNodeY = qMin (m_minNodeY, parsedElement.node_y);
-            m_maxNodeX = qMax (m_maxNodeX, parsedElement.node_x);
-            m_maxNodeY = qMax (m_maxNodeY, parsedElement.node_y);
-          AnimNodeAddEvent * ev = new AnimNodeAddEvent (parsedElement.nodeId,
-              parsedElement.nodeSysId,
-              parsedElement.node_x,
-              parsedElement.node_y,
-              parsedElement.nodeDescription,
-              parsedElement.node_r,
-              parsedElement.node_g,
-              parsedElement.node_b);
-          pAnimatorMode->addAnimEvent (0, ev);
-          AnimNodeMgr::getInstance ()->addAPosition (parsedElement.nodeId, 0, QPointF (parsedElement.node_x,
-                                                                                    parsedElement.node_y));
-          break;
-        }
-        case XML_PACKET_TX_REF:
-        {
-          m_packetRefs[parsedElement.uid] = parsedElement;
-          break;
-        }
-        case XML_WPACKET_RX_REF:
-        {
-            ParsedElement & ref = m_packetRefs[parsedElement.uid];
-            parsedElement.packetrx_fromId = ref.packetrx_fromId;
-            parsedElement.packetrx_fbTx = ref.packetrx_fbTx;
-            parsedElement.packetrx_lbTx = ref.packetrx_lbTx;
-            parsedElement.meta_info = ref.meta_info;
-        }
-        case XML_WPACKET_RX:
-        case XML_PACKET_RX:
-        {
-          m_firstPacketTime = qMin (m_firstPacketTime, parsedElement.packetrx_fbTx);
-          if (parsedElement.packetrx_fromId == parsedElement.packetrx_toId)
-            break;
-          uint8_t numWirelessSlots = 3;
-          AnimPacketEvent * ev = new AnimPacketEvent (parsedElement.packetrx_fromId,
-              parsedElement.packetrx_toId,
-              parsedElement.packetrx_fbTx,
-              parsedElement.packetrx_fbRx,
-              parsedElement.packetrx_lbTx,
-              parsedElement.packetrx_lbRx,
-              parsedElement.isWpacket,
-              parsedElement.meta_info,
-              numWirelessSlots);
-          pAnimatorMode->addAnimEvent (parsedElement.packetrx_fbTx, ev);
-          ++parsedElementCount;
-          m_lastPacketEventTime = parsedElement.packetrx_fbRx;
-          if (parsedElementCount == 50)
-            m_thousandThPacketTime = parsedElement.packetrx_fbRx;
-
-          if (!parsedElement.isWpacket)
-            {
-              qreal fullDuration = parsedElement.packetrx_fbRx - parsedElement.packetrx_fbTx;
-              uint32_t numSlots = WIRED_PACKET_SLOTS;
-              qreal step = fullDuration/numSlots;
-              for (uint32_t i = 1; i <= numSlots; ++i)
-                {
-                  qreal point = parsedElement.packetrx_fbTx + (i * step);
-                  //NS_LOG_DEBUG ("Point:" << point);
-                  pAnimatorMode->addAnimEvent (point, new AnimWiredPacketUpdateEvent ());
-                }
-            }
-
-          //NS_LOG_DEBUG ("Packet Last Time:" << m_lastPacketEventTime);
-          break;
-        }
-        case XML_LINK:
-        {
-          //AnimLinkMgr::getInstance ()->add (parsedElement.link_fromId, parsedElement.link_toId);
-          AnimLinkAddEvent * ev = new AnimLinkAddEvent (parsedElement.link_fromId,
-              parsedElement.link_toId,
-              parsedElement.linkDescription,
-              parsedElement.fromNodeDescription,
-              parsedElement.toNodeDescription);
-          pAnimatorMode->addAnimEvent (0, ev);
-          break;
-        }
-        case XML_NONP2P_LINK:
-        {
-          AnimLinkAddEvent * ev = new AnimLinkAddEvent (parsedElement.link_fromId,
-              parsedElement.link_toId,
-              parsedElement.linkDescription,
-              parsedElement.fromNodeDescription,
-              parsedElement.toNodeDescription,
-              false);
-          pAnimatorMode->addAnimEvent (0, ev);
-          break;
-
-
-        }
-        case XML_LINKUPDATE:
-        {
-          AnimLinkUpdateEvent * ev = new AnimLinkUpdateEvent (parsedElement.link_fromId,
-              parsedElement.link_toId,
-              parsedElement.linkDescription);
-          pAnimatorMode->addAnimEvent (parsedElement.updateTime, ev);
-          break;
-        }
-        case XML_BACKGROUNDIMAGE:
-        {
-          BackgroudImageProperties_t bgProp;
-          bgProp.fileName = parsedElement.fileName;
-          bgProp.x = parsedElement.x;
-          bgProp.y = parsedElement.y;
-          bgProp.scaleX = parsedElement.scaleX;
-          bgProp.scaleY = parsedElement.scaleY;
-          bgProp.opacity = parsedElement.opacity;
-          AnimatorMode::getInstance ()->setBackgroundImageProperties (bgProp);
-          break;
-        }
-
-        case XML_RESOURCE:
-        {
-          AnimResourceManager::getInstance ()->add (parsedElement.resourceId, parsedElement.resourcePath);
-          break;
-        }
-        case XML_IP:
-        {
-          AnimIpEvent * ev = new AnimIpEvent (parsedElement.nodeId, parsedElement.ipAddresses);
-          pAnimatorMode->addAnimEvent (0, ev);
-          break;
-        }
-        case XML_IPV6:
-        {
-          AnimIpv6Event * ev = new AnimIpv6Event (parsedElement.nodeId, parsedElement.ipv6Addresses);
-          pAnimatorMode->addAnimEvent (0, ev);
-          break;
-        }
-        case XML_CREATE_NODE_COUNTER:
-        {
-            AnimCreateNodeCounterEvent * ev = 0;
-            if (parsedElement.nodeCounterType == ParsedElement::UINT32_COUNTER)
-              ev = new AnimCreateNodeCounterEvent (parsedElement.nodeCounterId, parsedElement.nodeCounterName, AnimCreateNodeCounterEvent::UINT32_COUNTER);
-            if (parsedElement.nodeCounterType == ParsedElement::DOUBLE_COUNTER)
-              ev = new AnimCreateNodeCounterEvent (parsedElement.nodeCounterId, parsedElement.nodeCounterName, AnimCreateNodeCounterEvent::DOUBLE_COUNTER);
-            if (ev)
-              {
-                pAnimatorMode->addAnimEvent (0, ev);
-              }
-            break;
-        }
-        case XML_NODECOUNTER_UPDATE:
-        {
-            AnimNodeCounterUpdateEvent * ev = new AnimNodeCounterUpdateEvent (parsedElement.nodeCounterId,
-                                                                              parsedElement.nodeId,
-                                                                              parsedElement.nodeCounterValue);
-            pAnimatorMode->addAnimEvent (parsedElement.updateTime, ev);
-            break;
-        }
-        case XML_NODEUPDATE:
-        {
-          if (parsedElement.nodeUpdateType == ParsedElement::POSITION)
-            {
-              AnimNodePositionUpdateEvent * ev = new AnimNodePositionUpdateEvent (parsedElement.nodeId,
-                  parsedElement.node_x,
-                  parsedElement.node_y);
-              pAnimatorMode->addAnimEvent (parsedElement.updateTime, ev);
-              AnimNodeMgr::getInstance ()->addAPosition (parsedElement.nodeId, parsedElement.updateTime, QPointF (parsedElement.node_x,
-                                                                                        parsedElement.node_y));
-              m_minNodeX = qMin (m_minNodeX, parsedElement.node_x);
-              m_minNodeY = qMin (m_minNodeY, parsedElement.node_y);
-              m_maxNodeX = qMax (m_maxNodeX, parsedElement.node_x);
-              m_maxNodeY = qMax (m_maxNodeY, parsedElement.node_y);
-
-            }
-          if (parsedElement.nodeUpdateType == ParsedElement::COLOR)
-            {
-              AnimNodeColorUpdateEvent * ev = new AnimNodeColorUpdateEvent (parsedElement.nodeId,
-                  parsedElement.node_r,
-                  parsedElement.node_g,
-                  parsedElement.node_b);
-
-              pAnimatorMode->addAnimEvent (parsedElement.updateTime, ev);
-            }
-          if (parsedElement.nodeUpdateType == ParsedElement::DESCRIPTION)
-            {
-              AnimNodeDescriptionUpdateEvent * ev = new AnimNodeDescriptionUpdateEvent (parsedElement.nodeId,
-                  parsedElement.nodeDescription);
-              pAnimatorMode->addAnimEvent (parsedElement.updateTime, ev);
-
-            }
-          if (parsedElement.nodeUpdateType == ParsedElement::SIZE)
-            {
-              AnimNodeSizeUpdateEvent * ev = new AnimNodeSizeUpdateEvent (parsedElement.nodeId,
-                  parsedElement.node_width,
-                  parsedElement.node_height);
-              pAnimatorMode->addAnimEvent (parsedElement.updateTime, ev);
-
-            }
-          if (parsedElement.nodeUpdateType == ParsedElement::IMAGE)
-            {
-              AnimNodeImageUpdateEvent * ev = new AnimNodeImageUpdateEvent (parsedElement.nodeId,
-                  parsedElement.resourceId);
-              pAnimatorMode->addAnimEvent (parsedElement.updateTime, ev);
-            }
-          if (parsedElement.nodeUpdateType == ParsedElement::SYSTEM_ID)
-            {
-              AnimNodeSysIdUpdateEvent * ev = new AnimNodeSysIdUpdateEvent (parsedElement.nodeId,
-                                parsedElement.nodeSysId);
-              pAnimatorMode->addAnimEvent (parsedElement.updateTime, ev);
-            }
-          break;
-
-        }
-        case XML_INVALID:
-        default:
-        {
-          //qDebug ("Invalid XML element");
-        }
-        } //switch
+      parseElement (parsedElement);
+      
     } // while loop
 }
 
@@ -607,7 +616,6 @@ Animxmlparser::parseLinkUpdate ()
   parsedElement.updateTime = m_reader->attributes ().value ("t").toString ().toDouble ();
   setMaxSimulationTime (parsedElement.updateTime);
   return parsedElement;
-
 }
 
 ParsedElement
@@ -912,6 +920,5 @@ Animxmlparser::getMaxSimulationTime ()
 {
   return m_maxSimulationTime;
 }
-
 
 } // namespace netanim

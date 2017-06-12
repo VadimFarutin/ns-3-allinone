@@ -146,6 +146,7 @@ HEADERS += \
     countertablesscene.h \
     qcustomplot.h
 
+TEMPLATE = lib
 INCLUDEPATH += qtpropertybrowser/src
 INCLUDEPATH += /usr/local/include/ns3-dev
 
@@ -155,6 +156,9 @@ DEFINES += _DEBUG
 DEFINES += NS3_ASSERT_ENABLE
 DEFINES += NS3_LOG_ENABLE
 QMAKE_CXXFLAGS += -std=c++11
+
+target.path = /usr/local/lib
+INSTALLS += target
 
 RESOURCES += \
     resources.qrc \

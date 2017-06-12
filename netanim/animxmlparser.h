@@ -21,7 +21,6 @@
 #ifndef ANIMXMLPARSER_H
 #define ANIMXMLPARSER_H
 
-
 #include "common.h"
 #include "animevent.h"
 
@@ -152,7 +151,6 @@ struct ParsedElement
   uint64_t uid;
 };
 
-
 class Animxmlparser
 {
 public:
@@ -171,9 +169,15 @@ public:
   qreal getFirstPacketTime ();
   QPointF getMinPoint ();
   QPointF getMaxPoint ();
-
+  
+  /** NetAnim online mode. */
+  
+  /** Part of code from doParse (), separated to use in AnimationInterface. */
+  void parseElement (ParsedElement parsedElement);
 
 private:
+  uint64_t m_parsedElementCount;
+
   QString m_traceFileName;
   bool m_parsingComplete;
   QXmlStreamReader * m_reader;
@@ -195,6 +199,7 @@ private:
   typedef std::map <uint64_t, ParsedElement> PacketRefMap;
   PacketRefMap m_packetRefs;
 
+  //ParsedElement getNextParserElement ();
   ParsedElement parseAnim ();
   ParsedElement parseTopology ();
   ParsedElement parseNode ();

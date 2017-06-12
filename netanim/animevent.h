@@ -45,7 +45,8 @@ public:
     UPDATE_NODE_COUNTER_EVENT,
     CREATE_NODE_COUNTER_EVENT,
     IP_EVENT,
-    IPV6_EVENT
+    IPV6_EVENT,
+    END_EVENT // Dummy event
   } AnimEventType_h;
   AnimEventType_h m_type;
   AnimEvent (AnimEventType_h type): m_type (type)
@@ -53,6 +54,15 @@ public:
   }
 };
 
+/** NetAnim online mode. */
+class AnimEndEvent: public AnimEvent
+{
+public:
+  AnimEndEvent ()
+    : AnimEvent (END_EVENT)
+  {
+  }  
+};
 
 class AnimNodeAddEvent: public AnimEvent
 {

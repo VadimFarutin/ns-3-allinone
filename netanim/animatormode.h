@@ -29,11 +29,11 @@
 #include "mode.h"
 #include "timevalue.h"
 #include "animevent.h"
-#include "QtTreePropertyBrowser"
+#include "animxmlparser.h"
+//#include <QtTreePropertyBrowser>
 
 namespace netanim
 {
-
 
 typedef struct {
   QString fileName;
@@ -50,6 +50,8 @@ class AnimatorMode: public Mode
   Q_OBJECT
 
 public:
+  ~AnimatorMode ();
+
   // Getters
 
   static AnimatorMode * getInstance ();
@@ -69,7 +71,6 @@ public:
   void setWPacketDetected ();
   void setFocus (bool focus);
   void setCurrentTime (qreal currentTime);
-  void addAnimEvent (qreal t, AnimEvent *);
   void setNodeSize (AnimNode * animNode, qreal size);
   void setNodePos (AnimNode * animNode, qreal x, qreal y);
   void setNodeResource (AnimNode * animNode, uint32_t resourceId);
@@ -85,6 +86,23 @@ public:
   void externalPauseEvent ();
   void start ();
   void openPropertyBroswer ();
+
+  /** NetAnim online mode. */
+
+  /** Set online or offline mode. */  
+  void setMode (bool onlineMode);
+  /** If using online mode or not. */  
+  bool isOnlineMode ();
+  /** Get time of current event. */
+  double getCurrentTime ();
+  /** Init online mode. */
+  void initOnlineMode ();
+  /** Add event with specified time. */
+  void addAnimEvent (qreal t, AnimEvent *);
+  /** Get parser. */
+  Animxmlparser * getAnimxmlparser ();
+//  bool isSimulationTerminated ();
+//  bool isSimulationPaused ();
 
 private:
 
@@ -130,9 +148,22 @@ private:
   QPointF m_minPoint;
   QPointF m_maxPoint;
   bool m_backgroundExists;
-
-
-
+  
+  /** NetAnim online mode. */
+  
+  /** Flag is true if using online mode. */
+  bool m_onlineMode;
+  /** Next event time. */
+  qreal m_nextEventTime;
+  /** Flag is true if events were added while simulator was running. */
+  bool m_newEventAdded;
+  /** Flag is true if there are any events with time less than
+    * simulator next group time. */
+  bool m_eventsLeft;
+  /** Parser to call from AnimationInterface.
+    * Need to take several parameters when initializing,
+    * so it should be same parser. */
+  Animxmlparser * m_animxmlparser;
 
   //controls
   QVBoxLayout * m_vLayout;
@@ -227,8 +258,7 @@ private:
   QPropertyAnimation * getButtonAnimation (QToolButton * toolButton);
   void initPropertyBrowser ();
   void removeWiredPacket (AnimPacket * animPacket);
-
-
+  
 private slots:
   void testSlot ();
   void clickTraceFileOpenSlot ();

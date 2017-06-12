@@ -28,7 +28,10 @@
 #include "statsmode.h"
 #include "animpropertybrowser.h"
 
+#include "ns3/simulator.h"
+#include "ns3/default-simulator-impl.h"
 
+#include <limits>
 
 namespace netanim
 {
@@ -54,11 +57,19 @@ AnimatorMode::AnimatorMode ():
   m_pauseAtTime (65535),
   m_pauseAtTimeTriggered (false),
   m_backgroundExists (false),
+  m_onlineMode (false),
+  m_eventsLeft (false),
   m_parsingXMLDialog (0),
   m_transientDialog (0)
-
+    
 {
+  m_animxmlparser = new Animxmlparser ("");
   init ();
+}
+
+AnimatorMode::~AnimatorMode ()
+{
+  delete m_animxmlparser;
 }
 
 void
@@ -98,6 +109,12 @@ AnimatorMode::getInstance ()
   return pAnimatorMode;
 }
 
+Animxmlparser * 
+AnimatorMode::getAnimxmlparser ()
+{
+  return m_animxmlparser;
+}
+
 void
 AnimatorMode::openPropertyBroswer ()
 {
@@ -110,6 +127,64 @@ AnimatorMode::start ()
 {
   //clickTraceFileOpenSlot ();
 
+}
+
+void
+AnimatorMode::setMode (bool onlineMode)
+{
+  m_onlineMode = onlineMode;
+}
+
+bool
+AnimatorMode::isOnlineMode ()
+{
+  return m_onlineMode;
+}
+
+void
+AnimatorMode::initOnlineMode ()
+{
+  // This code mostly copied from parseXMLTraceFile () and postParse ()
+
+  // Dummy event added so that m_events is now always not empty
+  m_events.add (std::numeric_limits<qreal>::max (), new AnimEndEvent ());
+  
+  m_lastPacketEventTime = m_animxmlparser->getLastPacketEventTime ();
+  m_thousandthPacketTime = m_animxmlparser->getThousandthPacketTime ();
+  m_firstPacketEventTime = m_animxmlparser->getFirstPacketTime ();
+  m_minPoint = m_animxmlparser->getMinPoint ();
+  m_maxPoint = m_animxmlparser->getMaxPoint ();
+  AnimatorScene::getInstance ()->setSimulationBoundaries (m_minPoint, m_maxPoint);
+  if (m_backgroundExists)
+    {
+      AnimatorScene::getInstance ()->setBackgroundImage (m_backgroundImageProperties.fileName,
+                                                         m_backgroundImageProperties.x,
+                                                         m_backgroundImageProperties.y,
+                                                         m_backgroundImageProperties.scaleX,
+                                                         m_backgroundImageProperties.scaleY,
+                                                         m_backgroundImageProperties.opacity);
+    }
+  
+  enableAllToolButtons (true);
+  m_showNodeIdButton->setChecked (true);
+  showNodeIdSlot ();
+  m_gridButton->setChecked (true);
+  showGridLinesSlot ();
+  AnimatorView::getInstance ()->postParse ();
+  
+  update ();
+  m_bottomStatusLabel->setText ("Initialization complete: Click Play");
+  m_parseProgressBar->reset ();
+
+  resetBackground ();
+
+  dispatchEvents ();
+  m_gridButton->setChecked (false);
+  showGridLinesSlot ();
+  m_gridButton->setChecked (true);
+  showGridLinesSlot ();
+  AnimatorView::getInstance ()->postParse ();
+  AnimPropertyBroswer::getInstance ()->postParse ();
 }
 
 void
@@ -156,7 +231,6 @@ AnimatorMode::setControlDefaults ()
 
   enableAllToolButtons (false);
   m_fileOpenButton->setEnabled (true);
-
 }
 
 
@@ -261,7 +335,6 @@ AnimatorMode::initControls ()
   m_fileOpenButton->setToolTip ("Open XML trace file");
   m_fileOpenButton->setIcon (QIcon (":/resources/animator_fileopen.svg"));
   connect (m_fileOpenButton,SIGNAL (clicked ()), this, SLOT (clickTraceFileOpenSlot ()));
-
 
   m_reloadFileButton = new QToolButton;
   m_reloadFileButton->setToolTip ("Reload a file with the same file name as the previous XML");
@@ -573,7 +646,6 @@ AnimatorMode::initUpdateRate ()
       delete m_updateRateTimer;
     }
   m_updateRateTimer = new QTimer (this);
-  //m_updateRateTimer->setInterval (m_updateRates[UPDATE_RATE_SLIDER_DEFAULT] * 1000);
   m_updateRateTimer->setInterval (m_updateRates[UPDATE_RATE_SLIDER_DEFAULT] * 1000);
   connect (m_updateRateTimer, SIGNAL (timeout ()), this, SLOT (updateRateTimeoutSlot ()));
 }
@@ -683,7 +755,7 @@ AnimatorMode::fastForward (qreal t)
   showTransientDialog (true, "Please Wait. Parsing all events");
   m_playButton->setEnabled (false);
   //AnimatorScene::getInstance ()->invalidate ();
-  while (m_currentTime <t)
+  while (m_currentTime < t)
     {
       if (m_state == SIMULATION_COMPLETE)
         break;
@@ -716,21 +788,21 @@ AnimatorMode::reset ()
 void
 AnimatorMode::setCurrentTime (qreal currentTime)
 {
-  //NS_LOG_DEBUG ("Setting current time:" << currentTime);
-  m_simulationTimeSlider->setValue (currentTime);
+//  m_simulationTimeSlider->setValue (currentTime);
 
   m_qLcdNumber->display (currentTime);
   fflush (stdout);
+  
   if (currentTime < m_currentTime)
     reset ();
   //NS_LOG_DEBUG ("Events:" << m_events.toString());
   fastForward (currentTime);
+
   if (m_playing)
     m_updateRateTimer->start ();
-  m_simulationTimeSlider->setValue (currentTime);
   m_events.setCurrentTime (currentTime);
   m_currentTime = currentTime;
-
+  m_simulationTimeSlider->setValue (currentTime);
 }
 
 TimeValue<AnimEvent*>*
@@ -776,6 +848,10 @@ AnimatorMode::setMaxSimulationTime (double maxTime)
 void
 AnimatorMode::addAnimEvent (qreal t, AnimEvent * event)
 {
+  // Update next event time
+  m_nextEventTime = std::min (m_nextEventTime, t);
+  // New event added
+  m_newEventAdded = true;
   m_events.add (t, event);
 }
 
@@ -932,25 +1008,27 @@ AnimatorMode::doSimulationCompleted ()
   m_updateRateTimer->stop ();
   m_playButton->setEnabled (false);
   m_simulationTimeSlider->setEnabled (false);
+  //NS_LOG_DEBUG ("Simulation Completed");
+  m_bottomStatusLabel->setText ("Simulation Completed");
   QApplication::processEvents ();
   //clickResetSlot ();
   m_events.rewind ();
   //setCurrentTime (0);
   m_simulationTimeSlider->setEnabled (false);
-  //NS_LOG_DEBUG ("Simulation Completed");
-  m_bottomStatusLabel->setText ("Simulation Completed");
 
-  m_buttonAnimationGroup = new QParallelAnimationGroup;
-  //m_buttonAnimationGroup->addAnimation (getButtonAnimation (m_fileOpenButton));
-  m_buttonAnimationGroup->addAnimation (getButtonAnimation (m_reloadFileButton));
+  if (!m_onlineMode)
+    {
+      m_buttonAnimationGroup = new QParallelAnimationGroup;
+      //m_buttonAnimationGroup->addAnimation (getButtonAnimation (m_fileOpenButton));
+      m_buttonAnimationGroup->addAnimation (getButtonAnimation (m_reloadFileButton));
 
-  m_buttonAnimationGroup->start ();
+      m_buttonAnimationGroup->start ();
 
-  connect (m_buttonAnimationGroup,
-          SIGNAL (finished ()),
-          this,
-          SLOT (buttonAnimationGroupFinishedSlot ()));
-
+      connect (m_buttonAnimationGroup,
+              SIGNAL (finished ()),
+              this,
+              SLOT (buttonAnimationGroupFinishedSlot ()));
+    }
 }
 bool
 AnimatorMode::checkSimulationCompleted ()
@@ -1074,7 +1152,7 @@ AnimatorMode::updateTimelineSlot ()
   purgeWiredPackets ();
   purgeWirelessPackets ();
   int value = m_simulationTimeSlider->value ();
-  //NS_LOG_DEBUG ("Updating Timeline:" << value);
+  NS_LOG_DEBUG ("Updating Timeline:" << value);
   if (value == m_oldTimelineValue)
     return;
   m_oldTimelineValue = value;
@@ -1121,8 +1199,11 @@ AnimatorMode::enableMousePositionSlot ()
 void
 AnimatorMode::stepSlot ()
 {
-  externalPauseEvent ();
-  dispatchEvents ();
+  if (!m_onlineMode)
+    {
+      externalPauseEvent ();
+      dispatchEvents ();
+    }
 }
 
 void
@@ -1226,7 +1307,39 @@ AnimatorMode::updateRateTimeoutSlot ()
     return;
   if (m_playing)
     {
-      dispatchEvents ();
+      // Online mode
+      if (m_onlineMode)
+        {
+          // Need to get new from simulator
+          if (!m_eventsLeft)
+            {
+              // Reset flag
+              m_newEventAdded = false;
+              
+              ns3::Simulator::Run ();
+              
+              if (m_newEventAdded)
+                {
+                  // m_nextEventTime is minimum of time values that were added 
+                  setCurrentTime (m_nextEventTime);
+                  dispatchEvents ();
+                }
+            }
+          else
+            {
+              dispatchEvents ();
+            }
+
+          if (ns3::Simulator::IsFinished ())
+            {
+              setSimulationCompleted ();
+              return;
+            }            
+        }
+      else
+        {
+          dispatchEvents ();
+        }
 
       disconnect (m_simulationTimeSlider, SIGNAL (valueChanged (int)), this, SLOT (updateTimelineSlot (int)));
       m_simulationTimeSlider->setValue (m_currentTime);
@@ -1238,7 +1351,6 @@ AnimatorMode::updateRateTimeoutSlot ()
           AnimPropertyBroswer::getInstance ()->refresh ();
         }
       m_updateRateTimer->start ();
-
     }
 }
 
@@ -1279,6 +1391,10 @@ AnimatorMode::clickTraceFileOpenSlot ()
       showPopup ("Please close the properties panel first");
       return;
     }
+    
+  // Change mode
+  m_onlineMode = false;
+
   StatsMode::getInstance ()->systemReset ();
   systemReset ();
   QFileDialog fileDialog;
@@ -1302,7 +1418,6 @@ AnimatorMode::clickTraceFileOpenSlot ()
   AnimatorScene::getInstance ()->setSceneInfoText ("Please select an XML trace file using the file load button on the top-left corner", false);
 
 }
-
 
 void
 AnimatorMode::clickPlaySlot ()
@@ -1352,24 +1467,39 @@ AnimatorMode::dispatchEvents ()
   TimeValue<AnimEvent*>::TimeValueIteratorPair_t pp = m_events.getNext (result);
   //NS_LOG_DEBUG ("Now:" << pp.first->first);
   purgeWirelessPackets ();
+  
   if (result == m_events.GOOD)
     {
+      // Online mode
+      if (m_onlineMode)
+        {
+          // If visualizer is going to outrun simulator
+          if (pp.first->second->m_type != AnimEvent::END_EVENT &&
+              pp.first->first >= (qreal)ns3::DefaultSimulatorImpl::GetNextGroupTime () / 1e9)
+            {
+              m_nextEventTime = pp.first->first;
+              m_eventsLeft = false;
+              return;
+            }
+        }
+      
       //setCurrentTime (pp.first->first);
       m_currentTime = pp.first->first;
+      
       //if (m_currentTime > 0)
       //  {
       //    m_simulationTimeSlider->setEnabled (true);
       //  }
       m_qLcdNumber->display (m_currentTime);
 
-
+      
       for (TimeValue<AnimEvent*>::TimeValue_t::const_iterator j = pp.first;
           j != pp.second;
           ++j)
         {
           //NS_LOG_DEBUG ("fbTx:" << j->first);
           AnimEvent * ev = j->second;
-
+          
           switch (ev->m_type)
             {
             case AnimEvent::ADD_NODE_EVENT:
@@ -1515,7 +1645,6 @@ AnimatorMode::dispatchEvents ()
               if (m_fastForwarding)
                   break;
 
-
               QVector <AnimPacket *> packetsToRemove;
               for (std::map <AnimPacket *, AnimPacket *>::iterator i = m_wiredPacketsToAnimate.begin ();
                    i != m_wiredPacketsToAnimate.end ();
@@ -1531,7 +1660,6 @@ AnimatorMode::dispatchEvents ()
                   animPacket->update (m_currentTime);
                   animPacket->setPos (animPacket->getHead ());
                   AnimatorScene::getInstance ()->update ();
-                  //NS_LOG_DEBUG ("Updating");
                 }
 
               for (QVector <AnimPacket *>::const_iterator i = packetsToRemove.begin ();
@@ -1582,14 +1710,14 @@ AnimatorMode::dispatchEvents ()
               break;
 
             }
-	    case AnimEvent::UPDATE_NODE_SYSID_EVENT:
-	      {
-		AnimNodeSysIdUpdateEvent * ev = static_cast<AnimNodeSysIdUpdateEvent *> (j->second);
-		AnimNode * animNode = AnimNodeMgr::getInstance ()->getNode (ev->m_nodeId);
-		setNodeSysId (animNode, ev->m_nodeSysId);
+	          case AnimEvent::UPDATE_NODE_SYSID_EVENT:
+            {
+	            AnimNodeSysIdUpdateEvent * ev = static_cast<AnimNodeSysIdUpdateEvent *> (j->second);
+	            AnimNode * animNode = AnimNodeMgr::getInstance ()->getNode (ev->m_nodeId);
+	            setNodeSysId (animNode, ev->m_nodeSysId);
 
-		break;
-	      }
+	            break;
+            }
             case AnimEvent::ADD_LINK_EVENT:
             {
 
@@ -1613,22 +1741,40 @@ AnimatorMode::dispatchEvents ()
               LinkManager::getInstance ()->updateLink (ev->m_fromNodeId, ev->m_toNodeId, ev->m_linkDescription);
               break;
             }
-
+            case AnimEvent::END_EVENT:
+            {
+              //NS_LOG_DEBUG ("END_EVENT");
+              break;
+            }
 
             } //switch
         } // for/while loop
+  
       m_updateRateSlider->setEnabled (true);
       m_simulationTimeSlider->setEnabled (true);
+
+      if (pp.second->second->m_type != AnimEvent::END_EVENT)
+        {
+          // Next event is correct
+          m_eventsLeft = true;
+          return;
+        }
     } // if result == good
   else
     {
-
-      setSimulationCompleted ();
+      //NS_LOG_DEBUG ("not good");
+      
+      if (!m_onlineMode)
+        {
+          setSimulationCompleted ();
+        }
+        
+      // AnimatorScene::getInstance ()->update ();
     }
+  //QApplication::processEvents ();
 
-
-
-
+  m_nextEventTime = pp.second->first;
+  m_eventsLeft = false;
 }
 
 
@@ -1700,7 +1846,6 @@ AnimatorMode::setNodeSize (AnimNode *animNode, qreal size)
 void
 AnimatorMode::setNodePos (AnimNode *animNode, qreal x, qreal y)
 {
-  //NS_LOG_DEBUG ("SetNodePos:" << animNode->getNodeId ());
   animNode->setX (x);
   animNode->setY (y);
   animNode->setPos (x, y);
@@ -1795,7 +1940,11 @@ AnimatorMode::updateGridLinesSlot (int value)
 
 }
 
-
+double
+AnimatorMode::getCurrentTime ()
+{
+  return m_currentTime;
+}
 
 } // namespace netanim
 
