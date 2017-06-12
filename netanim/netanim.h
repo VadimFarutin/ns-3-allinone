@@ -19,6 +19,8 @@
 #ifndef NETANIM_H
 #define NETANIM_H
 
+#include <queue>
+
 #include "common.h"
 #include "mode.h"
 
@@ -29,7 +31,8 @@ class NetAnim : public QObject
 {
   Q_OBJECT
 public:
-  NetAnim ();
+  /** NetAnim online mode. */
+  NetAnim (bool onlineMode = false);
   QTabWidget * getTabWidget();
 private:
   typedef std::map <int, Mode *> TabIndexModeMap_t;

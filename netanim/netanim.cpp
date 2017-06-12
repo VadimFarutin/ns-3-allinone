@@ -26,10 +26,9 @@
 namespace netanim
 {
 
-NetAnim::NetAnim ():
+NetAnim::NetAnim (bool onlineMode):
   m_tabWidget (new QTabWidget)
 {
-
   AnimatorMode * animatorTab = AnimatorMode::getInstance ();
   m_tabWidget->addTab (animatorTab->getCentralWidget (), animatorTab->getTabName ());
   m_TabMode[0] = animatorTab;
@@ -55,6 +54,8 @@ NetAnim::NetAnim ():
   m_tabWidget->setGeometry (0, 0, minimumDimension, minimumDimension);
   m_tabWidget->showMaximized ();
   m_tabWidget->show ();
+  
+  animatorTab->setMode (onlineMode);
   animatorTab->start ();
 }
 
