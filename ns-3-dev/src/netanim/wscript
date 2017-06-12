@@ -7,13 +7,19 @@ NETANIM_RELEASE_NAME = "netanim-3.108"
 
 def build (bld) :
     module = bld.create_ns3_module ('netanim', ['internet', 'mobility', 'wimax', 'wifi', 'csma', 'lte', 'uan', 'lr-wpan', 'energy', 'wave'])
-    module.includes = '.'
-    module.source = [ 'model/animation-interface.cc', ]
+    module.source = [ 'model/animation-interface.cc' ]
+    module.includes = ['.', '../../../netanim', '/usr/include/qt4/QtCore', '/usr/include/qt4/QtGui', '/usr/include/qt4' ]
+    module.lib = [ 'netanim-lib', 'QtGui', 'QtCore' ]
+    module.linkflags = [ '-L/usr/local/lib', '-Wl,-R,/usr/local/lib', '-lnetanim-lib' ]
+    
     netanim_test = bld.create_ns3_module_test_library('netanim')
     netanim_test.source = ['test/netanim-test.cc', ]
+    netanim_test.includes = ['.', '../../../netanim', '/usr/include/qt4/QtCore', '/usr/include/qt4/QtGui', '/usr/include/qt4' ]
+    netanim_test.lib = [ 'netanim-lib', 'QtGui', 'QtCore' ]
+    netanim_test.linkflags = [ '-L/usr/local/lib', '-Wl,-R,/usr/local/lib', '-lnetanim-lib' ]
+    
     headers = bld(features='ns3header')
     headers.module = 'netanim'
     headers.source = ['model/animation-interface.h', ]
     if (bld.env['ENABLE_EXAMPLES']) :
        bld.recurse('examples')
-

@@ -78,6 +78,15 @@ public:
   virtual uint32_t GetSystemId (void) const; 
   virtual uint32_t GetContext (void) const;
 
+  /** NetAnim online mode. */
+  
+  /** Set simulator mode. */
+  static void SetMode (bool isWithNetAnim);
+  /** Get time of next events group to process. */
+  static uint64_t GetNextGroupTime (void);
+  /** Get time of events processing at the moment. */
+  static uint64_t GetCurrentGroupTime (void);
+  
 private:
   virtual void DoDispose (void);
 
@@ -132,6 +141,18 @@ private:
 
   /** Main execution thread. */
   SystemThread::ThreadId m_main;
+
+  /** NetAnim online mode. */
+  
+  /** Process the next group of events with same time. */
+  void ProcessNextGroup (void);
+  
+  /** Flag is true if simulator is used by NetAnim with online mode. */
+  static bool withNetAnim;
+  /** Time of next events group to process. */
+  static uint64_t nextGroupTime;
+  /** Time of events processing at the moment. */
+  static uint64_t currentGroupTime;
 };
 
 } // namespace ns3

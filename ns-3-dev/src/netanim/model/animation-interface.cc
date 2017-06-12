@@ -33,6 +33,7 @@
 #include <string>
 #include <iomanip>
 #include <map>
+#include <fstream>
 
 // ns3 includes
 #include "ns3/animation-interface.h"
@@ -58,7 +59,12 @@
 #include "ns3/ipv6.h"
 #include "ns3/ipv4-routing-protocol.h"
 #include "ns3/energy-source-container.h"
-#include "animation-interface.h"
+#include "ns3/default-simulator-impl.h"
+
+#include "animatormode.h"
+
+using netanim::ParsedElement;
+using netanim::ParsedElementType;
 
 namespace ns3 {
 
@@ -66,8 +72,7 @@ NS_LOG_COMPONENT_DEFINE ("AnimationInterface");
 
 // Globals
 
-static bool initialized = false; //!< Initialization flag
-
+static bool initialized = false;
 
 // Public methods
 
@@ -77,7 +82,7 @@ AnimationInterface::AnimationInterface (const std::string fn)
     m_mobilityPollInterval (Seconds (0.25)), 
     m_outputFileName (fn),
     gAnimUid (0), 
-    m_writeCallback (0), 
+    m_writeCallback (0),
     m_started (false), 
     m_enablePacketMetadata (false), 
     m_startTime (Seconds (0)), 
@@ -87,15 +92,73 @@ AnimationInterface::AnimationInterface (const std::string fn)
     m_routingStopTime (Seconds (0)), 
     m_routingFileName (""),
     m_routingPollInterval (Seconds (5)), 
-    m_trackPackets (true)
+    m_trackPackets (true),
+    m_onlineMode(false),
+    m_netAnim (0),
+    app (0),
+    m_parser (0)
 {
   initialized = true;
   StartAnimation ();
 }
 
+AnimationInterface::AnimationInterface ()
+  : m_f (0),
+    m_routingF (0),
+    m_mobilityPollInterval (Seconds (0.25)), 
+    m_outputFileName (""),
+    gAnimUid (0), 
+    m_writeCallback (0),
+    m_started (false), 
+    m_enablePacketMetadata (false), 
+    m_startTime (Seconds (0)), 
+    m_stopTime (Seconds (3600 * 1000)),
+    m_maxPktsPerFile (MAX_PKTS_PER_TRACE_FILE), 
+    m_originalFileName (""),
+    m_routingStopTime (Seconds (0)), 
+    m_routingFileName (""),
+    m_routingPollInterval (Seconds (5)), 
+    m_trackPackets (true),
+    m_onlineMode(true), 
+    m_netAnim (0),
+    app (0),
+    m_parser (0)
+{
+  initialized = true;
+  DefaultSimulatorImpl::SetMode (true);
+  
+  MakeApplication ();
+  StartAnimation ();
+  
+  netanim::AnimatorMode::getInstance ()->initOnlineMode ();
+  QApplication::exec ();
+}
+
 AnimationInterface::~AnimationInterface ()
 {
+  if (m_netAnim)
+    {
+      delete m_netAnim;    
+    }
+  if (app)
+    {
+      delete app;
+    }
+  
   StopAnimation ();
+}
+
+void
+AnimationInterface::MakeApplication ()
+{
+  static char name[] = "NetAnim";
+  char *argv = name;
+  static int argc = 1;
+  app = new QApplication (argc, &argv);
+  app->setApplicationName ("NetAnim");
+  //app.setWindowIcon (QIcon (":/resources/netanim-logo.png"));
+  m_netAnim = new netanim::NetAnim (true);
+  m_parser = netanim::AnimatorMode::getInstance ()->getAnimxmlparser ();
 }
 
 void 
@@ -195,7 +258,14 @@ AnimationInterface::EnableIpv4RouteTracking (std::string fileName, Time startTim
   SetOutputFile (fileName, true);
   m_routingStopTime = stopTime;
   m_routingPollInterval = pollInterval;
-  WriteXmlAnim (true);
+  if (m_onlineMode)
+    {
+      ParseAnim (true);
+    }
+  else
+    {
+      WriteXmlAnim (true);
+    }
   Simulator::Schedule (startTime, &AnimationInterface::TrackIpv4Route, this);
   return *this;
 }
@@ -238,7 +308,14 @@ AnimationInterface::AddNodeCounter (std::string counterName, CounterType counter
 {
   m_nodeCounters.push_back (counterName);
   uint32_t counterId = m_nodeCounters.size () - 1; // counter ID is zero-indexed
-  WriteXmlAddNodeCounter (counterId, counterName, counterType);
+  if (m_onlineMode)
+    {
+      ParseAddNodeCounter (counterId, counterName, counterType);
+    }
+  else
+    {
+      WriteXmlAddNodeCounter (counterId, counterName, counterType);
+    }
   return counterId; 
 }
 
@@ -247,7 +324,14 @@ AnimationInterface::AddResource (std::string resourcePath)
 {
   m_resources.push_back (resourcePath);
   uint32_t resourceId = m_resources.size () -  1; // resource ID is zero-indexed
-  WriteXmlAddResource (resourceId, resourcePath);
+  if (m_onlineMode)
+    {
+      ParseAddResource (resourceId, resourcePath);
+    }
+  else
+    {
+      WriteXmlAddResource (resourceId, resourcePath);
+    }
   return resourceId; 
 }
 
@@ -316,7 +400,14 @@ AnimationInterface::UpdateNodeImage (uint32_t nodeId, uint32_t resourceId)
     {
       NS_FATAL_ERROR ("Resource Id:" << resourceId << " not found. Did you use AddResource?");
     }
-  WriteXmlUpdateNodeImage (nodeId, resourceId);
+  if (m_onlineMode)
+    {
+      ParseUpdateNodeImage (nodeId, resourceId);
+    }
+  else
+    {
+      WriteXmlUpdateNodeImage (nodeId, resourceId);
+    }
 }
 
 void 
@@ -326,7 +417,14 @@ AnimationInterface::UpdateNodeCounter (uint32_t nodeCounterId, uint32_t nodeId, 
     {
       NS_FATAL_ERROR ("NodeCounter Id:" << nodeCounterId << " not found. Did you use AddNodeCounter?");
     }
-  WriteXmlUpdateNodeCounter (nodeCounterId, nodeId, counter);
+  if (m_onlineMode)
+    {
+      ParseUpdateNodeCounter (nodeCounterId, nodeId, counter);
+    }
+  else
+    {
+      WriteXmlUpdateNodeCounter (nodeCounterId, nodeId, counter);
+    }
 }
 
 void 
@@ -336,7 +434,14 @@ AnimationInterface::SetBackgroundImage (std::string fileName, double x, double y
     {
       NS_FATAL_ERROR ("Opacity must be between 0.0 and 1.0");
     }
-  WriteXmlUpdateBackground (fileName, x, y, scaleX, scaleY, opacity);
+  if (m_onlineMode)
+    {
+      ParseUpdateBackground (fileName, x, y, scaleX, scaleY, opacity);
+    }
+  else
+    {
+      WriteXmlUpdateBackground (fileName, x, y, scaleX, scaleY, opacity);
+    }
 }
 
 void 
@@ -344,7 +449,14 @@ AnimationInterface::UpdateNodeSize (uint32_t nodeId, double width, double height
 {
   AnimationInterface::NodeSize s = { width, height };
   m_nodeSizes[nodeId] = s;
-  WriteXmlUpdateNodeSize (nodeId, s.width, s.height);
+  if (m_onlineMode)
+    {
+      ParseUpdateNodeSize (nodeId, s.width, s.height);
+    }
+  else
+    {
+      WriteXmlUpdateNodeSize (nodeId, s.width, s.height);
+    }
 }
 
 void 
@@ -360,14 +472,28 @@ AnimationInterface::UpdateNodeColor (uint32_t nodeId, uint8_t r, uint8_t g, uint
   NS_LOG_INFO ("Setting node color for Node Id:" << nodeId); 
   Rgb rgb = {r, g, b};
   m_nodeColors[nodeId] = rgb;
-  WriteXmlUpdateNodeColor (nodeId, r, g, b);
+  if (m_onlineMode)
+    {
+      ParseUpdateNodeColor (nodeId, r, g, b);
+    }
+  else
+    {
+      WriteXmlUpdateNodeColor (nodeId, r, g, b);
+    }
 }
 
 void 
 AnimationInterface::UpdateLinkDescription (uint32_t fromNode, uint32_t toNode,
                                                 std::string linkDescription)
 {
-  WriteXmlUpdateLink (fromNode, toNode, linkDescription);
+  if (m_onlineMode)
+    {
+      ParseUpdateLink (fromNode, toNode, linkDescription);
+    }
+  else
+    {
+      WriteXmlUpdateLink (fromNode, toNode, linkDescription);
+    }
 }
 
 void 
@@ -376,7 +502,14 @@ AnimationInterface::UpdateLinkDescription (Ptr <Node> fromNode, Ptr <Node> toNod
 {
   NS_ASSERT (fromNode);
   NS_ASSERT (toNode);
-  WriteXmlUpdateLink (fromNode->GetId (), toNode->GetId (), linkDescription);
+  if (m_onlineMode)
+    {
+      ParseUpdateLink (fromNode->GetId (), toNode->GetId (), linkDescription);
+    }
+  else
+    {
+      WriteXmlUpdateLink (fromNode->GetId (), toNode->GetId (), linkDescription);
+    }
 }
 
 void 
@@ -390,7 +523,14 @@ AnimationInterface::UpdateNodeDescription (uint32_t nodeId, std::string descr)
 {
   NS_ASSERT (NodeList::GetNode (nodeId));
   m_nodeDescriptions[nodeId] = descr;
-  WriteXmlUpdateNodeDescription (nodeId);
+  if (m_onlineMode)
+    {
+      ParseUpdateNodeDescription (nodeId);
+    }
+  else
+    {
+      WriteXmlUpdateNodeDescription (nodeId);
+    }
 }
 
 // Private methods
@@ -420,7 +560,14 @@ AnimationInterface::MobilityCourseChangeTrace (Ptr <const MobilityModel> mobilit
       v = mobility->GetPosition ();
     }
   UpdatePosition (n, v);
-  WriteXmlUpdateNodePosition (n->GetId (), v.x, v.y);
+  if (m_onlineMode)
+    {
+      ParseUpdateNodePosition (n->GetId (), v.x, v.y);
+    }
+  else
+    {
+      WriteXmlUpdateNodePosition (n->GetId (), v.x, v.y);
+    }
 }
 
 bool 
@@ -450,7 +597,14 @@ AnimationInterface::MobilityAutoCheck ()
       Ptr <Node> n = MovedNodes [i];
       NS_ASSERT (n);
       Vector v = GetPosition (n);
-      WriteXmlUpdateNodePosition (n->GetId () , v.x, v.y);
+      if (m_onlineMode)
+        {
+          ParseUpdateNodePosition (n->GetId (), v.x, v.y);
+        }
+      else
+        {
+          WriteXmlUpdateNodePosition (n->GetId () , v.x, v.y);
+        }
     }
   if (!Simulator::IsFinished ())
     {
@@ -538,7 +692,14 @@ void
 AnimationInterface::WriteRoutePath (uint32_t nodeId, std::string destination, Ipv4RoutePathElements rpElements)
 {
   NS_LOG_INFO ("Writing Route Path From :" << nodeId << " To: " << destination.c_str ());
-  WriteXmlRp (nodeId, destination, rpElements);
+  if (m_onlineMode)
+    {
+      ParseRp (nodeId, destination, rpElements);
+    }
+  else
+    {
+      WriteXmlRp (nodeId, destination, rpElements);
+    }
   /*for (Ipv4RoutePathElements::const_iterator i = rpElements.begin ();
        i != rpElements.end ();
        ++i)
@@ -554,7 +715,14 @@ AnimationInterface::WriteRoutePath (uint32_t nodeId, std::string destination, Ip
 void 
 AnimationInterface::WriteNonP2pLinkProperties (uint32_t id, std::string ipv4Address, std::string channelType)
 {
-  WriteXmlNonP2pLinkProperties (id, ipv4Address, channelType);
+  if (m_onlineMode)
+    {
+      ParseNonP2pLinkProperties (id, ipv4Address, channelType);
+    }
+  else
+    {
+      WriteXmlNonP2pLinkProperties (id, ipv4Address, channelType);
+    }
 }
 
 const std::vector<std::string> 
@@ -792,7 +960,9 @@ AnimationInterface::DevTxTrace (std::string context,
   double fbRx = (now + rxTime - txTime).GetSeconds ();
   double lbRx = (now + rxTime).GetSeconds ();
   CheckMaxPktsPerTraceFile ();
-  WriteXmlP ("p", 
+  if (m_onlineMode)
+    {
+      ParseP ("p", 
              tx->GetNode ()->GetId (), 
              fbTx, 
              lbTx, 
@@ -800,6 +970,18 @@ AnimationInterface::DevTxTrace (std::string context,
              fbRx, 
              lbRx, 
              m_enablePacketMetadata? GetPacketMetadata (p):"");
+    }
+  else
+    {
+      WriteXmlP ("p", 
+             tx->GetNode ()->GetId (), 
+             fbTx, 
+             lbTx, 
+             rx->GetNode ()->GetId (), 
+             fbRx, 
+             lbRx, 
+             m_enablePacketMetadata? GetPacketMetadata (p):"");
+    }
 }
 
 void
@@ -1227,7 +1409,14 @@ AnimationInterface::OutputWirelessPacketTxInfo (Ptr<const Packet> p, AnimPacketI
     {
       nodeId = pktInfo.m_txNodeId;
     }
-  WriteXmlPRef (animUid, nodeId, pktInfo.m_fbTx, m_enablePacketMetadata? GetPacketMetadata (p):"");
+  if (m_onlineMode)
+    {
+      ParsePRef (animUid, nodeId, pktInfo.m_fbTx, m_enablePacketMetadata? GetPacketMetadata (p):"");
+    }
+  else
+    {
+      WriteXmlPRef (animUid, nodeId, pktInfo.m_fbTx, m_enablePacketMetadata? GetPacketMetadata (p):"");
+    }
 }
 
 void 
@@ -1235,7 +1424,14 @@ AnimationInterface::OutputWirelessPacketRxInfo (Ptr<const Packet> p, AnimPacketI
 {
   CheckMaxPktsPerTraceFile ();
   uint32_t rxId = pktInfo.m_rxnd->GetNode ()->GetId ();
-  WriteXmlP (animUid, "wpr", rxId, pktInfo.m_fbRx, pktInfo.m_lbRx);
+  if (m_onlineMode)
+    {
+      ParseP (animUid, "wpr", rxId, pktInfo.m_fbRx, pktInfo.m_lbRx);
+    }
+  else
+    {
+      WriteXmlP (animUid, "wpr", rxId, pktInfo.m_fbRx, pktInfo.m_lbRx);
+    }
 }
 
 void 
@@ -1246,14 +1442,28 @@ AnimationInterface::OutputCsmaPacket (Ptr<const Packet> p, AnimPacketInfo &pktIn
   uint32_t nodeId = pktInfo.m_txnd->GetNode ()->GetId ();
   uint32_t rxId = pktInfo.m_rxnd->GetNode ()->GetId ();
 
-  WriteXmlP ("p", 
-             nodeId, 
-             pktInfo.m_fbTx, 
-             pktInfo.m_lbTx, 
-             rxId,
-             pktInfo.m_fbRx, 
-             pktInfo.m_lbRx, 
-             m_enablePacketMetadata? GetPacketMetadata (p):"");
+  if (m_onlineMode)
+    {
+      ParseP ("p", 
+                 nodeId, 
+                 pktInfo.m_fbTx, 
+                 pktInfo.m_lbTx, 
+                 rxId,
+                 pktInfo.m_fbRx, 
+                 pktInfo.m_lbRx, 
+                 m_enablePacketMetadata? GetPacketMetadata (p):"");
+    }
+  else
+    {
+      WriteXmlP ("p", 
+                 nodeId, 
+                 pktInfo.m_fbTx, 
+                 pktInfo.m_lbTx, 
+                 rxId,
+                 pktInfo.m_fbRx, 
+                 pktInfo.m_lbRx, 
+                 m_enablePacketMetadata? GetPacketMetadata (p):"");
+    }
 }
 
 void 
@@ -1440,7 +1650,11 @@ AnimationInterface::StopAnimation (bool onlyAnimation)
   if (m_f) 
     {
       // Terminate the anim element
-      WriteXmlClose ("anim");
+      
+      if (!m_onlineMode)
+        {
+          WriteXmlClose ("anim");
+        }
       std::fclose (m_f);
       m_f = 0;
     }
@@ -1450,7 +1664,10 @@ AnimationInterface::StopAnimation (bool onlyAnimation)
     }
   if (m_routingF)
     {
-      WriteXmlClose ("anim", true);
+      if (!m_onlineMode)
+        {
+          WriteXmlClose ("anim", true);
+        }
       std::fclose (m_routingF);
       m_routingF = 0;
     }
@@ -1461,8 +1678,17 @@ AnimationInterface::StartAnimation (bool restart)
 {
   m_currentPktCount = 0;
   m_started = true;
-  SetOutputFile (m_outputFileName);
-  WriteXmlAnim ();
+  
+  if (m_onlineMode)
+    {
+      ParseAnim ();
+    }
+  else
+    {
+      SetOutputFile (m_outputFileName);
+      WriteXmlAnim ();
+    }
+  
   WriteNodes ();
   WriteNodeColors ();
   WriteLinkProperties ();
@@ -1470,6 +1696,7 @@ AnimationInterface::StartAnimation (bool restart)
   WriteIpv6Addresses ();
   WriteNodeSizes ();
   WriteNodeEnergies ();
+  
   if (!restart)
     {
       Simulator::Schedule (m_mobilityPollInterval, &AnimationInterface::MobilityAutoCheck, this);
@@ -1878,8 +2105,15 @@ AnimationInterface::WriteIpv4Addresses ()
           ++it)
         {
           ipv4Addresses.push_back (it->second);
-	}
-      WriteXmlIpv4Addresses (i->first, ipv4Addresses);
+	      }
+      if (m_onlineMode)
+        {
+          ParseIpv4Addresses (i->first, ipv4Addresses);
+        }
+      else
+        {
+          WriteXmlIpv4Addresses (i->first, ipv4Addresses);
+        }
     }
 }
 
@@ -1898,8 +2132,15 @@ AnimationInterface::WriteIpv6Addresses()
         {
           ipv6Addresses.push_back (it->second);
 	}
-        WriteXmlIpv6Addresses (i->first, ipv6Addresses);
-    }
+      if (m_onlineMode)
+        {
+          ParseIpv6Addresses (i->first, ipv6Addresses);
+        }
+      else
+        {
+          WriteXmlIpv6Addresses (i->first, ipv6Addresses);
+        }
+   }
 }
 
 void 
@@ -1986,7 +2227,15 @@ AnimationInterface::WriteLinkProperties ()
 		          LinkProperties lp = { GetIpv6Address (dev) + "~" + GetMacAddress (dev), GetIpv6Address (chDev) + "~" + GetMacAddress (chDev), "" };
 			  m_linkProperties[p2pPair] = lp;
 		        }
-                      WriteXmlLink (n1Id, 0, n2Id);
+                      
+                      if (m_onlineMode)
+                        {
+                          ParseLink (n1Id, 0, n2Id);
+                        }
+                      else
+                        {
+                          WriteXmlLink (n1Id, 0, n2Id);
+                        }
                     }
                 }
             }
@@ -2003,7 +2252,14 @@ AnimationInterface::WriteNodes ()
       Ptr<Node> n = *i;
       NS_LOG_INFO ("Update Position for Node: " << n->GetId ());
       Vector v = UpdatePosition (n);
-      WriteXmlNode (n->GetId (), n->GetSystemId (), v.x, v.y);
+      if (m_onlineMode)
+        {
+          ParseNode (n->GetId (), n->GetSystemId (), v.x, v.y);
+        }
+      else
+        {
+          WriteXmlNode (n->GetId (), n->GetSystemId (), v.x, v.y);
+        }
     }
 }
 
@@ -2278,7 +2534,14 @@ AnimationInterface::TrackIpv4Route ()
       for (NodeContainer::Iterator i = m_routingNc.Begin (); i != m_routingNc.End (); ++i)
         {
           Ptr <Node> n = *i;
-          WriteXmlRouting (n->GetId (), GetIpv4RoutingTable (n));
+          if (m_onlineMode)
+            {
+              ParseRouting (n->GetId (), GetIpv4RoutingTable (n));
+            }
+          else
+            {
+              WriteXmlRouting (n->GetId (), GetIpv4RoutingTable (n));
+            }
         }
     }
   else
@@ -2286,7 +2549,15 @@ AnimationInterface::TrackIpv4Route ()
       for (NodeList::Iterator i = NodeList::Begin (); i != NodeList::End (); ++i)
         {
           Ptr <Node> n = *i;
-          WriteXmlRouting (n->GetId (), GetIpv4RoutingTable (n));
+          
+          if (m_onlineMode)
+            {
+              ParseRouting (n->GetId (), GetIpv4RoutingTable (n));
+            }
+          else
+            {
+              WriteXmlRouting (n->GetId (), GetIpv4RoutingTable (n));
+            }
         }
     }
   TrackIpv4RoutePaths ();
@@ -2692,6 +2963,440 @@ AnimationInterface::WriteXmlNonP2pLinkProperties (uint32_t id, std::string ipAdd
   WriteN (element.ToString (), m_f);
 }
 
+
+
+/***** Parse *****/
+
+void 
+AnimationInterface::ParseAnim (bool routing)
+{
+  ParsedElement parsedElement;
+  parsedElement.type = ParsedElementType::XML_ANIM;
+  parsedElement.version = QString (GetNetAnimVersion ().c_str()).replace ("netanim-","").toDouble ();
+  if (m_parser)
+    {
+      m_parser->parseElement (parsedElement);
+    }
+}
+
+void 
+AnimationInterface::ParseNode (uint32_t id, uint32_t sysId, double locX, double locY)
+{
+  ParsedElement parsedElement;
+  parsedElement.type = ParsedElementType::XML_NODE;
+  parsedElement.nodeId = id;
+  parsedElement.nodeSysId = sysId;
+  parsedElement.node_x = locX;
+  parsedElement.node_y = locY;
+
+  //  parsedElement.node_batteryCapacity = m_reader->attributes ().value ("rc").toString ().toDouble ();
+  //  parsedElement.nodeDescription = m_reader->attributes ().value ("descr").toString ();
+  //  parsedElement.node_r = m_reader->attributes ().value ("r").toString ().toUInt ();
+  //  parsedElement.node_g = m_reader->attributes ().value ("g").toString ().toUInt ();
+  //  parsedElement.node_b = m_reader->attributes ().value ("b").toString ().toUInt ();
+  //  parsedElement.hasColorUpdate = !m_reader->attributes ().value ("r").isEmpty ();
+  //  parsedElement.hasBattery = !m_reader->attributes ().value ("rc").isEmpty ();
+  if (m_parser)
+    {
+      m_parser->parseElement (parsedElement);
+    }
+}
+
+void 
+AnimationInterface::ParseUpdateLink (uint32_t fromId, uint32_t toId, std::string linkDescription)
+{
+  ParsedElement parsedElement;
+  parsedElement.type = ParsedElementType::XML_LINKUPDATE;
+  parsedElement.link_fromId = fromId;
+  parsedElement.link_toId = toId;
+  parsedElement.linkDescription = linkDescription.c_str();
+  parsedElement.updateTime = Simulator::Now ().GetSeconds ();
+  //  setMaxSimulationTime (parsedElement.updateTime);
+  if (m_parser)
+    {
+      m_parser->parseElement (parsedElement);
+    }
+}
+
+void 
+AnimationInterface::ParseLink (uint32_t fromId, uint32_t toLp, uint32_t toId)
+{
+  LinkProperties lprop ;
+  lprop.fromNodeDescription = "";
+  lprop.toNodeDescription = "";
+  lprop.linkDescription = "";
+
+  P2pLinkNodeIdPair p1 = { fromId, toId };
+  P2pLinkNodeIdPair p2 = { toId, fromId };
+  if (m_linkProperties.find (p1) != m_linkProperties.end ())
+    {
+      lprop = m_linkProperties[p1];
+    }
+  else if (m_linkProperties.find (p2) != m_linkProperties.end ())
+    {
+      lprop = m_linkProperties[p2];
+    }
+  
+  ParsedElement parsedElement;
+  parsedElement.type = ParsedElementType::XML_LINK;
+  parsedElement.link_fromId = fromId;
+  parsedElement.link_toId = toId;
+  parsedElement.fromNodeDescription = lprop.fromNodeDescription.c_str();
+  parsedElement.toNodeDescription = lprop.toNodeDescription.c_str();
+  parsedElement.linkDescription = lprop.linkDescription.c_str();
+  if (m_parser)
+    {
+      m_parser->parseElement (parsedElement);
+    }
+}
+
+void
+AnimationInterface::ParseIpv4Addresses (uint32_t nodeId, std::vector<std::string> ipv4Addresses)
+{
+  ParsedElement parsedElement;
+  parsedElement.type = ParsedElementType::XML_IP;
+  parsedElement.nodeId = nodeId;
+
+  for (std::vector<std::string>::const_iterator i = ipv4Addresses.begin ();
+       i != ipv4Addresses.end ();
+       ++i)
+    {
+      parsedElement.ipAddresses.push_back((*i).c_str());
+    }
+  
+  if (m_parser)
+    {
+      m_parser->parseElement (parsedElement);
+    }
+}
+
+void
+AnimationInterface::ParseIpv6Addresses (uint32_t nodeId, std::vector<std::string> ipv6Addresses)
+{
+  ParsedElement parsedElement;
+  parsedElement.type = ParsedElementType::XML_IPV6;
+  parsedElement.nodeId = nodeId;
+
+  for (std::vector<std::string>::const_iterator i = ipv6Addresses.begin ();
+       i != ipv6Addresses.end ();
+       ++i)
+    {
+      parsedElement.ipv6Addresses.push_back((*i).c_str());
+    }
+  
+  if (m_parser)
+    {
+      m_parser->parseElement (parsedElement);
+    }
+}
+
+void 
+AnimationInterface::ParseRouting (uint32_t nodeId, std::string routingInfo)
+{
+  //  AnimXmlElement element ("rt");
+  //  element.AddAttribute ("t", Simulator::Now ().GetSeconds ());
+  //  element.AddAttribute ("id", nodeId);
+  //  element.AddAttribute ("info", routingInfo.c_str (), true);
+  //  WriteN (element.ToString (), m_routingF);
+  //  if (m_sendCallback)
+  //    {
+  //      (*m_sendCallback) (parsedElement);
+  //    }
+}
+
+void 
+AnimationInterface::ParseRp (uint32_t nodeId, std::string destination, Ipv4RoutePathElements rpElements)
+{
+  //  std::string tagName = "rp";
+  //  AnimXmlElement element (tagName, false);
+  //  element.AddAttribute ("t", Simulator::Now ().GetSeconds ());
+  //  element.AddAttribute ("id", nodeId);
+  //  element.AddAttribute ("d", destination.c_str ());
+  //  element.AddAttribute ("c", rpElements.size ());
+  //  for (Ipv4RoutePathElements::const_iterator i = rpElements.begin ();
+  //       i != rpElements.end ();
+  //       ++i)
+  //    {
+  //      Ipv4RoutePathElement rpElement = *i;
+  //      AnimXmlElement rpeElement ("rpe");
+  //      rpeElement.AddAttribute ("n", rpElement.nodeId);
+  //      rpeElement.AddAttribute ("nH", rpElement.nextHop.c_str ());
+  //      element.AppendChild (rpeElement);
+  //    }
+  //  WriteN (element.ToString (),  m_routingF);
+  //  if (m_sendCallback)
+  //    {
+  //      (*m_sendCallback) (parsedElement);
+  //    }
+}
+
+void 
+AnimationInterface::ParsePRef (uint64_t animUid, uint32_t fId, double fbTx, std::string metaInfo)
+{
+  ParsedElement parsedElement;
+  parsedElement.type = ParsedElementType::XML_PACKET_TX_REF;
+  parsedElement.uid = animUid;
+  parsedElement.packetrx_fromId = fId;
+  parsedElement.packetrx_fbTx = fbTx;
+  //  parsedElement.packetrx_lbTx = m_reader->attributes ().value ("lbTx").toString ().toDouble ();
+  //  setMaxSimulationTime (parsedElement.packetrx_lbTx);
+  if (!metaInfo.empty ())
+    {
+      parsedElement.meta_info = metaInfo.c_str ();
+    }
+  if (parsedElement.meta_info == "")
+    {
+      parsedElement.meta_info = "null";
+    }
+  
+  if (m_parser)
+    {
+      m_parser->parseElement (parsedElement);
+    }
+}
+
+void 
+AnimationInterface::ParseP (uint64_t animUid, std::string pktType, uint32_t tId, double fbRx, double lbRx)
+{
+  ParsedElement parsedElement;
+  if (pktType == "pr")
+    {
+      parsedElement.type = ParsedElementType::XML_PACKET_TX_REF;
+    }
+  else if (pktType == "wpr")
+    {
+      parsedElement.type = ParsedElementType::XML_WPACKET_RX_REF;
+      parsedElement.isWpacket = true;
+    }
+  
+  parsedElement.uid = animUid;
+  parsedElement.packetrx_toId = tId;
+  parsedElement.packetrx_fbRx = fbRx;
+  parsedElement.packetrx_lbRx = lbRx;
+  
+  if (m_parser)
+    {
+      m_parser->parseElement (parsedElement);
+    }
+}
+
+void 
+AnimationInterface::ParseP (std::string pktType, uint32_t fId, double fbTx, double lbTx, 
+                                                   uint32_t tId, double fbRx, double lbRx, std::string metaInfo)
+
+{
+  ParsedElement parsedElement;
+  if (pktType == "p")
+    {
+      parsedElement.isWpacket = false;
+      parsedElement.type = ParsedElementType::XML_PACKET_RX;
+    }
+  else if (pktType == "wp")
+    {
+      parsedElement.type = ParsedElementType::XML_WPACKET_RX;
+      parsedElement.isWpacket = true;
+    }
+    
+  parsedElement.packetrx_fromId = fId;
+  parsedElement.packetrx_fbTx = fbTx;
+  parsedElement.packetrx_lbTx = lbTx;
+  parsedElement.packetrx_toId = tId;
+  parsedElement.packetrx_fbRx = fbRx;
+  parsedElement.packetrx_lbRx = lbRx;
+  if (!parsedElement.packetrx_lbRx && parsedElement.packetrx_fbRx)
+    {
+      parsedElement.packetrx_lbRx = parsedElement.packetrx_fbRx;
+    }
+
+  if (!metaInfo.empty ())
+    {
+      parsedElement.meta_info = metaInfo.c_str ();
+    }    
+  if (parsedElement.meta_info == "")
+    {
+      parsedElement.meta_info = "null";
+    }
+    
+  if (m_parser)
+    {
+      m_parser->parseElement (parsedElement);
+    }
+}
+
+void 
+AnimationInterface::ParseAddNodeCounter (uint32_t nodeCounterId, std::string counterName, CounterType counterType)
+{
+  ParsedElement parsedElement;
+  parsedElement.type = ParsedElementType::XML_CREATE_NODE_COUNTER;
+  parsedElement.nodeCounterId = nodeCounterId;
+  parsedElement.nodeCounterName = counterName.c_str();
+  QString cType = CounterTypeToString (counterType).c_str();
+  if (cType == "UINT32")
+    parsedElement.nodeCounterType = ParsedElement::UINT32_COUNTER;
+  if (cType == "DOUBLE")
+    parsedElement.nodeCounterType = ParsedElement::DOUBLE_COUNTER;
+  
+  if (m_parser)
+    {
+      m_parser->parseElement (parsedElement);
+    }
+}
+
+void 
+AnimationInterface::ParseAddResource (uint32_t resourceId, std::string resourcePath)
+{
+  ParsedElement parsedElement;
+  parsedElement.type = ParsedElementType::XML_RESOURCE;
+  parsedElement.resourceId = resourceId;
+  parsedElement.resourcePath = resourcePath.c_str();
+  
+  if (m_parser)
+    {
+      m_parser->parseElement (parsedElement);
+    }
+}
+
+void 
+AnimationInterface::ParseUpdateNodeImage (uint32_t nodeId, uint32_t resourceId)
+{
+  ParsedElement parsedElement;
+  parsedElement.type = ParsedElementType::XML_NODEUPDATE;
+  parsedElement.updateTime = Simulator::Now ().GetSeconds ();
+  parsedElement.nodeId = nodeId;
+
+  parsedElement.nodeUpdateType = ParsedElement::IMAGE;
+  parsedElement.resourceId = resourceId;
+  
+  if (m_parser)
+    {
+      m_parser->parseElement (parsedElement);
+    }
+}
+
+void 
+AnimationInterface::ParseUpdateNodeSize (uint32_t nodeId, double width, double height)
+{
+  ParsedElement parsedElement;
+  parsedElement.type = ParsedElementType::XML_NODEUPDATE;
+  parsedElement.updateTime = Simulator::Now ().GetSeconds ();
+  parsedElement.nodeId = nodeId;
+
+  parsedElement.nodeUpdateType = ParsedElement::SIZE;
+  parsedElement.node_width = width;
+ parsedElement.node_height = height;
+  
+  if (m_parser)
+    {
+      m_parser->parseElement (parsedElement);
+    }
+}
+
+void 
+AnimationInterface::ParseUpdateNodePosition (uint32_t nodeId, double x, double y)
+{
+  ParsedElement parsedElement;
+  parsedElement.type = ParsedElementType::XML_NODEUPDATE;
+  parsedElement.updateTime = Simulator::Now ().GetSeconds ();
+  parsedElement.nodeId = nodeId;
+
+  parsedElement.nodeUpdateType = ParsedElement::POSITION;
+    
+  parsedElement.node_x = x;
+  parsedElement.node_y = y;
+  
+  if (m_parser)
+    {
+      m_parser->parseElement (parsedElement);
+    }
+}
+
+void 
+AnimationInterface::ParseUpdateNodeColor (uint32_t nodeId, uint8_t r, uint8_t g, uint8_t b)
+{
+  ParsedElement parsedElement;
+  parsedElement.type = ParsedElementType::XML_NODEUPDATE;
+  parsedElement.updateTime = Simulator::Now ().GetSeconds ();
+  parsedElement.nodeId = nodeId;
+
+  parsedElement.nodeUpdateType = ParsedElement::COLOR;
+  parsedElement.node_r = (uint32_t) r;
+  parsedElement.node_g = (uint32_t) g;
+  parsedElement.node_b = (uint32_t) b;
+  
+  if (m_parser)
+    {
+      m_parser->parseElement (parsedElement);
+    }
+}
+
+void 
+AnimationInterface::ParseUpdateNodeDescription (uint32_t nodeId)
+{
+  ParsedElement parsedElement;
+  parsedElement.type = ParsedElementType::XML_NODEUPDATE;
+  parsedElement.updateTime = Simulator::Now ().GetSeconds ();
+  parsedElement.nodeId = nodeId;
+
+  parsedElement.nodeUpdateType = ParsedElement::DESCRIPTION;
+  if (m_nodeDescriptions.find (nodeId) != m_nodeDescriptions.end ())
+    {
+      parsedElement.nodeDescription = m_nodeDescriptions[nodeId].c_str();
+    }
+
+  if (m_parser)
+    {
+      m_parser->parseElement (parsedElement);
+    }
+}
+
+
+void 
+AnimationInterface::ParseUpdateNodeCounter (uint32_t nodeCounterId, uint32_t nodeId, double counterValue)
+{
+  ParsedElement parsedElement;
+  parsedElement.type = ParsedElementType::XML_NODECOUNTER_UPDATE;
+  parsedElement.nodeCounterId = nodeCounterId;
+  parsedElement.nodeId = nodeId;
+  parsedElement.updateTime = Simulator::Now ().GetSeconds ();
+  parsedElement.nodeCounterValue = counterValue;
+  
+  if (m_parser)
+    {
+      m_parser->parseElement (parsedElement);
+    }
+}
+
+void 
+AnimationInterface::ParseUpdateBackground (std::string fileName, double x, double y, double scaleX, double scaleY, double opacity)
+{
+  ParsedElement parsedElement;
+  parsedElement.type = ParsedElementType::XML_BACKGROUNDIMAGE;
+  parsedElement.fileName = fileName.c_str();
+  parsedElement.x = x;
+  parsedElement.y = y;
+  parsedElement.scaleX = scaleX;
+  parsedElement.scaleY = scaleY;
+  parsedElement.opacity = opacity;
+  
+  if (m_parser)
+    {
+      m_parser->parseElement (parsedElement);
+    }
+}
+
+void 
+AnimationInterface::ParseNonP2pLinkProperties (uint32_t id, std::string ipAddress, std::string channelType)
+{
+  ParsedElement parsedElement;
+  parsedElement.type = ParsedElementType::XML_NONP2P_LINK;
+  parsedElement.link_fromId = id;
+  parsedElement.fromNodeDescription = ipAddress.c_str();
+  
+  if (m_parser)
+    {
+      m_parser->parseElement (parsedElement);
+    }
+}
 
 
 /***** AnimXmlElement  *****/

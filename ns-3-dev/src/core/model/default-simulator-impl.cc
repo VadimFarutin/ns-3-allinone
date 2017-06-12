@@ -30,7 +30,6 @@
 
 #include <cmath>
 
-
 /**
  * \file
  * \ingroup simulator
@@ -45,6 +44,10 @@ namespace ns3 {
 NS_LOG_COMPONENT_DEFINE ("DefaultSimulatorImpl");
 
 NS_OBJECT_ENSURE_REGISTERED (DefaultSimulatorImpl);
+
+bool DefaultSimulatorImpl::withNetAnim = false;
+uint64_t DefaultSimulatorImpl::nextGroupTime = -1;
+uint64_t DefaultSimulatorImpl::currentGroupTime = 0;
 
 TypeId
 DefaultSimulatorImpl::GetTypeId (void)
@@ -80,6 +83,24 @@ DefaultSimulatorImpl::~DefaultSimulatorImpl ()
   NS_LOG_FUNCTION (this);
 }
 
+void 
+DefaultSimulatorImpl::SetMode (bool isWithNetAnim)
+{
+  withNetAnim = isWithNetAnim;
+}
+
+uint64_t
+DefaultSimulatorImpl::GetNextGroupTime (void)
+{
+  return nextGroupTime;
+}
+
+uint64_t
+DefaultSimulatorImpl::GetCurrentGroupTime (void)
+{
+  return currentGroupTime;
+}
+
 void
 DefaultSimulatorImpl::DoDispose (void)
 {
@@ -94,6 +115,7 @@ DefaultSimulatorImpl::DoDispose (void)
   m_events = 0;
   SimulatorImpl::DoDispose ();
 }
+
 void
 DefaultSimulatorImpl::Destroy ()
 {
@@ -128,7 +150,7 @@ DefaultSimulatorImpl::SetScheduler (ObjectFactory schedulerFactory)
 }
 
 // System ID for non-distributed simulation is always zero
-uint32_t 
+uint32_t
 DefaultSimulatorImpl::GetSystemId (void) const
 {
   return 0;
@@ -189,22 +211,67 @@ DefaultSimulatorImpl::ProcessEventsWithContext (void)
 }
 
 void
+DefaultSimulatorImpl::ProcessNextGroup (void)
+{
+  bool isFirst = true;
+  nextGroupTime = -1;
+  
+  while (!IsFinished ())
+    {
+      Scheduler::Event next = m_events->RemoveNext ();
+      
+      // Process events only with time <= m_currentTs
+      if (!isFirst && next.key.m_ts > m_currentTs)
+        {
+          // Save next group time
+          nextGroupTime = next.key.m_ts;
+          m_events->Insert (next);
+          return;
+        }
+     
+      isFirst = false;
+      // Save current group time
+      currentGroupTime = next.key.m_ts;
+      m_currentTs = next.key.m_ts;
+      m_unscheduledEvents--;
+
+      NS_LOG_DEBUG ("handle " << next.key.m_ts);
+      m_currentContext = next.key.m_context;
+      m_currentUid = next.key.m_uid;
+      next.impl->Invoke ();
+      next.impl->Unref ();
+
+      ProcessEventsWithContext ();
+    }
+}
+
+void
 DefaultSimulatorImpl::Run (void)
 {
   NS_LOG_FUNCTION (this);
-  // Set the current threadId as the main threadId
-  m_main = SystemThread::Self();
-  ProcessEventsWithContext ();
-  m_stop = false;
-
-  while (!m_events->IsEmpty () && !m_stop) 
+  
+  // NetAnim online mode
+  if (withNetAnim)
     {
-      ProcessOneEvent ();
+      ProcessEventsWithContext ();
+      m_stop = false;    
+      ProcessNextGroup ();
     }
+  else
+    {
+      // Set the current threadId as the main threadId
+      m_main = SystemThread::Self();
+      ProcessEventsWithContext ();
+      m_stop = false;
 
-  // If the simulator stopped naturally by lack of events, make a
-  // consistency test to check that we didn't lose any events along the way.
-  NS_ASSERT (!m_events->IsEmpty () || m_unscheduledEvents == 0);
+      while (!m_events->IsEmpty () && !m_stop) 
+        {
+          ProcessOneEvent ();
+        }
+      // If the simulator stopped naturally by lack of events, make a
+      // consistency test to check that we didn't lose any events along the way.
+      NS_ASSERT (!m_events->IsEmpty () || m_unscheduledEvents == 0);
+    }
 }
 
 void 
